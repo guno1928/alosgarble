@@ -12,11 +12,33 @@
 
 ## Installation
 
+### One-liner (Linux / macOS)
+
+```sh
+curl -sL https://raw.githubusercontent.com/guno1928/alosgarble/main/install.sh | bash
+```
+
+This will install `alosgarble` via `go install`, auto-detect your shell (bash/zsh/fish), add `GOPATH/bin` to your PATH, and verify the command works — all automatically.
+
+### Manual
+
 ```sh
 go install github.com/guno1928/alosgarble@latest
 ```
 
-After installation, `alosgarble` is available as a command anywhere on your system.
+If `alosgarble` says "command not found" after install, add Go's bin directory to your PATH:
+
+```sh
+echo 'export PATH="$(go env GOPATH)/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+```
+
+### Windows
+
+```
+go install github.com/guno1928/alosgarble@latest
+```
+
+Go automatically adds `%GOPATH%\bin` to PATH on Windows.
 
 **Requirements:**
 - Go 1.26.2 or later (required by the patched linker)
