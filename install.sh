@@ -52,6 +52,8 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$GOBIN"; then
     export PATH="$GOBIN:$PATH"
 fi
 
+echo 'export PATH="$(go env GOPATH)/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+
 # Verify it works
 if command -v "$BINARY" &>/dev/null; then
     echo ""
