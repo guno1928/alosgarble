@@ -199,13 +199,13 @@ func mainErr(args []string) error {
 	command, args := args[0], args[1:]
 
 	if command != "toolexec" && len(args) == 1 && args[0] == "-V=full" {
-		return fmt.Errorf(`did you run "go [command] -toolexec=garble" instead of "garble [command]"?`)
+		return fmt.Errorf(`did you run "go [command] -toolexec=alosgarble" instead of "alosgarble [command]"?`)
 	}
 
 	switch command {
 	case "help":
 		if hasHelpFlag(args) || len(args) > 1 {
-			fmt.Fprintf(os.Stderr, "usage: garble help [command]\n")
+			fmt.Fprintf(os.Stderr, "usage: alosgarble help [command]\n")
 			return errJustExit(0)
 		}
 		if len(args) == 1 {
@@ -366,7 +366,7 @@ func toolexecCmd(command string, args []string) (*exec.Cmd, error) {
 	if hasHelpFlag(flags) {
 		out, _ := exec.Command("go", command, "-h").CombinedOutput()
 		fmt.Fprintf(os.Stderr, `
-usage: garble [garble flags] %s [arguments]
+usage: alosgarble [alosgarble flags] %s [arguments]
 
 This command wraps "go %s". Below is its help:
 
@@ -375,7 +375,7 @@ This command wraps "go %s". Below is its help:
 	}
 	for _, flag := range flags {
 		if rxGarbleFlag.MatchString(flag) {
-			return nil, fmt.Errorf("garble flags must precede command, like: garble %s build ./pkg", flag)
+			return nil, fmt.Errorf("alosgarble flags must precede command, like: alosgarble %s build ./pkg", flag)
 		}
 	}
 
@@ -574,17 +574,17 @@ garble was built with %q and can't be used with the newer %q; rebuild it with a 
 
 func usage() {
 	fmt.Fprint(os.Stderr, `
-Garble obfuscates Go code by wrapping the Go toolchain.
+alosgarble obfuscates Go code by wrapping the Go toolchain.
 
-	garble [garble flags] command [go flags] [go arguments]
+	alosgarble [alosgarble flags] command [go flags] [go arguments]
 
 For example, to build an obfuscated program:
 
-	garble build ./cmd/foo
+	alosgarble build ./cmd/foo
 
-Similarly, to combine garble flags and Go build flags:
+Similarly, to combine alosgarble flags and Go build flags:
 
-	garble -literals build -tags=purego ./cmd/foo
+	alosgarble -seed=random build -tags=purego ./cmd/foo
 
 The following commands are supported:
 
@@ -592,17 +592,17 @@ The following commands are supported:
 	test           replace "go test"
 	run            replace "go run"
 	reverse        de-obfuscate output such as stack traces
-	version        print the version and build settings of the garble binary
+	version        print the version and build settings of the alosgarble binary
 
-To learn more about a command, run "garble help <command>".
+To learn more about a command, run "alosgarble help <command>".
 
-garble accepts the following flags before a command:
+alosgarble accepts the following flags before a command:
 
 `[1:])
 	flagSet.PrintDefaults()
 	fmt.Fprint(os.Stderr, `
 
-For more information, see https://github.com/burrowers/garble.
+For more information, see https://github.com/guno1928/alosgarble.
 `[1:])
 }
 
