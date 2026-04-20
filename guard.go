@@ -7,6 +7,30 @@ import (
 	"strings"
 )
 
+const (
+	guardTables       = 36
+	guardTablesVar    = 18
+	guardTableSize    = 5600
+	guardTableSizeVar = 2400
+	guardHeavy        = 50
+	guardHeavyVar     = 50
+	guardMedium       = 50
+	guardMediumVar    = 50
+	guardLight        = 50
+	guardLightVar     = 45000
+
+	ballastTables       = 36
+	ballastTablesVar    = 248
+	ballastTableSize    = 5600
+	ballastTableSizeVar = 3400
+	ballastHeavy        = 50
+	ballastHeavyVar     = 50
+	ballastMedium       = 50
+	ballastMediumVar    = 50
+	ballastLight        = 50
+	ballastLightVar     = 45000
+)
+
 type tableFLEntry struct {
 	name        string
 	first, last uint64
@@ -41,11 +65,11 @@ func generateGuardSourceBallastOnly(rnd *mathrand.Rand, pkgName string, scale fl
 
 func (g *ggen) emitBallastOnly(pkgName string, scale float64) {
 	g.wf("package %s\n\n", pkgName)
-	numTables := scaleInt(90+g.r.Intn(20), scale)
-	tableSize := scaleInt(14000+g.r.Intn(6000), scale)
-	numHeavy := scaleInt(300+g.r.Intn(80), scale)
-	numMedium := scaleInt(280+g.r.Intn(80), scale)
-	numLight := scaleInt(140+g.r.Intn(60), scale)
+	numTables := scaleInt(ballastTables+g.r.Intn(ballastTablesVar), scale)
+	tableSize := scaleInt(ballastTableSize+g.r.Intn(ballastTableSizeVar), scale)
+	numHeavy := scaleInt(ballastHeavy+g.r.Intn(ballastHeavyVar), scale)
+	numMedium := scaleInt(ballastMedium+g.r.Intn(ballastMediumVar), scale)
+	numLight := scaleInt(ballastLight+g.r.Intn(ballastLightVar), scale)
 	tableNames := g.emitLookupTables(numTables, tableSize)
 	g.emitGlobalsBallastOnly()
 	g.emitBallastOnlyInit(tableNames, numHeavy)
@@ -119,32 +143,17 @@ func (g *ggen) u32() string  { return fmt.Sprintf("0x%08X", g.r.Uint32()) }
 func (g *ggen) ou64() string { return fmt.Sprintf("0x%016X", g.r.Uint64()|1) }
 func (g *ggen) rot() int     { return 1 + g.r.Intn(62) }
 
-func (g *ggen) dir() string {
-	fp := 2 + g.r.Intn(2)
-	jj := 2 + g.r.Intn(4)
-	bs := 5 + g.r.Intn(8)
-	return fmt.Sprintf("//garble:controlflow flatten_passes=%d junk_jumps=%d block_splits=%d", fp, jj, bs)
-}
-
-func (g *ggen) heavyDir() string {
-	jj := 3 + g.r.Intn(4)
-	bs := 8 + g.r.Intn(8)
-	return fmt.Sprintf("//garble:controlflow flatten_passes=3 junk_jumps=%d block_splits=%d", jj, bs)
-}
-
-func (g *ggen) noDir() string { return "" }
-
 func (g *ggen) w(s string)            { g.sb.WriteString(s) }
 func (g *ggen) wf(f string, a ...any) { fmt.Fprintf(&g.sb, f, a...) }
 func (g *ggen) nl()                   { g.sb.WriteByte('\n') }
 
 func (g *ggen) emitScaled(pkgName string, scale float64) {
 	g.emitWithParams(pkgName,
-		scaleInt(90+g.r.Intn(20), scale),
-		scaleInt(14000+g.r.Intn(6000), scale),
-		scaleInt(300+g.r.Intn(80), scale),
-		scaleInt(280+g.r.Intn(80), scale),
-		scaleInt(140+g.r.Intn(60), scale),
+		scaleInt(guardTables+g.r.Intn(guardTablesVar), scale),
+		scaleInt(guardTableSize+g.r.Intn(guardTableSizeVar), scale),
+		scaleInt(guardHeavy+g.r.Intn(guardHeavyVar), scale),
+		scaleInt(guardMedium+g.r.Intn(guardMediumVar), scale),
+		scaleInt(guardLight+g.r.Intn(guardLightVar), scale),
 	)
 }
 
@@ -657,7 +666,7 @@ func (g *ggen) emitHeavyBallast(name string, tables []string) {
 	numOps := 120 + g.r.Intn(120)
 	m := g.lookupMask
 
-	g.wf("// heavy\n%s\nfunc %s(x uint64) uint64 {\n", g.heavyDir(), name)
+	g.wf("func %s(x uint64) uint64 {\n", name)
 	g.wf("\tacc := x ^ %s\n", g.u64())
 	g.wf("\tb := x * %s\n", g.ou64())
 
@@ -701,7 +710,7 @@ func (g *ggen) emitMediumBallast(name string, tables []string, prev []string) {
 	r1 := g.rot()
 	m := g.lookupMask
 
-	g.wf("%s\nfunc %s(x uint64) uint64 {\n", g.dir(), name)
+	g.wf("func %s(x uint64) uint64 {\n", name)
 	g.wf("\tacc := x*%s ^ %s\n", k1, g.u64())
 	if len(prev) > 0 && g.r.Intn(2) == 0 {
 		other := prev[g.r.Intn(len(prev))]
@@ -745,7 +754,7 @@ func (g *ggen) emitLightBallast(name string, tables []string, prev []string) {
 	rotl := g.id("rotl")
 	m := g.lookupMask
 
-	g.wf("%s\nfunc %s(x uint64) uint64 {\n", g.dir(), name)
+	g.wf("func %s(x uint64) uint64 {\n", name)
 	g.wf("\tv := x*%s\n", k)
 	for i := 0; i < 4+g.r.Intn(6); i++ {
 		switch g.r.Intn(6) {
@@ -777,7 +786,7 @@ func (g *ggen) emitExtraParamBallast(tableNames []string, names []string) {
 		p1, p2 := g.fresh(), g.fresh()
 		k1, k2 := g.ou64(), g.ou64()
 		r := g.rot()
-		g.wf("%s\nfunc %s(x uint64, %s uint64, %s uint64) uint64 {\n", g.dir(), name, p1, p2)
+		g.wf("func %s(x uint64, %s uint64, %s uint64) uint64 {\n", name, p1, p2)
 		g.wf("\tacc := x*%s ^ %s\n", k1, g.u64())
 		g.wf("\tacc ^= %s[(%s^%s)&%d]\n", tbl, p1, p2, m)
 		g.wf("\tacc = acc*%s + %s[(acc^%s)&%d]\n", k2, tbl, g.u64(), m)

@@ -591,12 +591,11 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 	tf.obfRand = mathrand.New(mathrand.NewSource(int64(binary.BigEndian.Uint64(randSeed))))
 
 	var requiredPkgs []string
-	guardInjected := false
 	if _, inGuardSet := sharedCache.GarbleGuardPkgs[tf.curPkg.ImportPath]; inGuardSet {
 
 		ballastScale := 1.0
 		if len(sharedCache.GarbleGuardPkgs) >= 3 {
-			ballastScale = 0.38
+			ballastScale = 0.25
 		}
 		var guardSrc string
 
@@ -623,7 +622,6 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 		} else {
 			files = append(files, guardFile)
 			paths = append(paths, "GARBLE_guard.go")
-			guardInjected = true
 			tf.guardInjected = true
 		}
 	}
@@ -633,7 +631,7 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 	}
 
 	var ssaPkg *ssa.Package
-	if flagControlFlow || guardInjected {
+	if flagControlFlow {
 		ssaPkg = ssaBuildPkg(tf.pkg, files, tf.info)
 
 		newFileName, newFile, affectedFiles, err := ctrlflow.Obfuscate(fset, ssaPkg, files, tf.obfRand)
