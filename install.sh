@@ -4,14 +4,13 @@ set -e
 BINARY="alosgarble"
 MODULE="github.com/guno1928/alosgarble"
 
-# Check Go is installed
 if ! command -v go &>/dev/null; then
     echo "Error: Go is not installed. Install it from https://go.dev/dl/"
     exit 1
 fi
 
 echo "Installing $BINARY..."
-go install "$MODULE@latest"
+GOTOOLCHAIN=auto go install "$MODULE@latest"
 
 # Find where go install put the binary
 GOBIN="$(go env GOBIN)"
@@ -52,9 +51,6 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$GOBIN"; then
     export PATH="$GOBIN:$PATH"
 fi
 
-echo 'export PATH="$(go env GOPATH)/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
-
-# Verify it works
 if command -v "$BINARY" &>/dev/null; then
     echo ""
     echo "Done! Run '$BINARY' to get started."
