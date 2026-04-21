@@ -14,16 +14,28 @@
 
 ### One-liner (Linux / macOS)
 
+**Latest version:**
 ```sh
-curl -sL https://raw.githubusercontent.com/guno1928/alosgarble/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/guno1928/alosgarble/main/install.sh | bash
 ```
+
+**Specific commit hash, branch, or tag:**
+```sh
+curl -fsSL https://raw.githubusercontent.com/guno1928/alosgarble/main/install.sh | bash -s -- <hash>
+```
+
+Replace `<hash>` with any full or short commit hash, branch name, or tag — e.g. `bash -s -- abc1234`.
 
 This will install `alosgarble` via `go install`, auto-detect your shell (bash/zsh/fish), add `GOPATH/bin` to your PATH, and verify the command works — all automatically.
 
 ### Manual
 
 ```sh
+# latest
 go install github.com/guno1928/alosgarble@latest
+
+# specific commit / tag
+go install github.com/guno1928/alosgarble@<hash>
 ```
 
 If `alosgarble` says "command not found" after install, add Go's bin directory to your PATH:

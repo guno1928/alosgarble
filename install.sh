@@ -3,14 +3,15 @@ set -e
 
 BINARY="alosgarble"
 MODULE="github.com/guno1928/alosgarble"
+REF="${1:-latest}"
 
 if ! command -v go &>/dev/null; then
     echo "Error: Go is not installed. Install it from https://go.dev/dl/"
     exit 1
 fi
 
-echo "Installing $BINARY..."
-GOTOOLCHAIN=auto go install "$MODULE@latest"
+echo "Installing $BINARY @ $REF..."
+GOTOOLCHAIN=auto go install "$MODULE@$REF"
 
 # Find where go install put the binary
 GOBIN="$(go env GOBIN)"
