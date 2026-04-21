@@ -313,6 +313,7 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 		switch {
 
 		case runtimeAndDeps[path],
+			pkg.Standard,
 
 			path == "runtime/cgo",
 
