@@ -242,7 +242,14 @@ func mainErr(args []string) error {
 		return commandReverse(args)
 	case "build", "test", "run":
 		buildArgs := args
-		cmd, err := toolexecCmd(command, args)
+		if command == "build" {
+			if outVal := flagValue(buildArgs, "-o"); outVal != "" {
+				if abs, absErr := filepath.Abs(outVal); absErr == nil {
+					buildArgs = flagSetValue(buildArgs, "-o", abs)
+				}
+			}
+		}
+		cmd, err := toolexecCmd(command, buildArgs)
 		defer func() {
 			if err := os.RemoveAll(os.Getenv("GARBLE_SHARED")); err != nil {
 				fmt.Fprintf(os.Stderr, "could not clean up GARBLE_SHARED: %v\n", err)
@@ -276,6 +283,7 @@ func mainErr(args []string) error {
 		buildErr := cmd.Run()
 		stopProgressBar(pb)
 		if buildErr != nil {
+			fmt.Fprintln(os.Stderr, "\n  build failed")
 			return buildErr
 		}
 		if command == "build" {
@@ -283,9 +291,14 @@ func mainErr(args []string) error {
 			if outPath == "" {
 				for _, pkg := range sharedCache.ListedPackages {
 					if pkg.Name == "main" && !pkg.Standard {
-						outPath = filepath.Base(pkg.Dir)
+						name := filepath.Base(pkg.Dir)
 						if runtime.GOOS == "windows" {
-							outPath += ".exe"
+							name += ".exe"
+						}
+						if cwd, err := os.Getwd(); err == nil {
+							outPath = filepath.Join(cwd, name)
+						} else {
+							outPath = name
 						}
 						break
 					}
@@ -293,7 +306,13 @@ func mainErr(args []string) error {
 			}
 			if outPath != "" {
 				if err := patchOutputBinary(outPath); err != nil {
+					fmt.Fprintf(os.Stderr, "\n  output  %s\n  status  PATCH FAILED: %v\n", outPath, err)
 					return fmt.Errorf("patching output binary: %v", err)
+				}
+				if info, err := os.Stat(outPath); err == nil {
+					fmt.Fprintf(os.Stderr, "\n  output  %s\n  size    %.1f MB\n", outPath, float64(info.Size())/(1024*1024))
+				} else {
+					fmt.Fprintf(os.Stderr, "\n  output  %s\n", outPath)
 				}
 			}
 		}
