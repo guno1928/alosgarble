@@ -217,6 +217,7 @@ type obfRand struct {
 	rnd *mathrand.Rand
 
 	funcDepth       int
+	initDepth       int
 	proxyDispatcher *proxyDispatcher
 }
 

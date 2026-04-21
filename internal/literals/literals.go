@@ -35,6 +35,9 @@ func Obfuscate(rand *mathrand.Rand, file *ast.File, info *types.Info, linkString
 		switch node := cursor.Node().(type) {
 		case *ast.FuncDecl:
 			or.funcDepth++
+			if node.Recv == nil && node.Name != nil && node.Name.Name == "init" {
+				or.initDepth++
+			}
 
 			if node.Doc != nil {
 				for _, comment := range node.Doc.List {
@@ -64,8 +67,11 @@ func Obfuscate(rand *mathrand.Rand, file *ast.File, info *types.Info, linkString
 	}
 
 	post := func(cursor *astutil.Cursor) bool {
-		if _, ok := cursor.Node().(*ast.FuncDecl); ok {
+		if fd, ok := cursor.Node().(*ast.FuncDecl); ok {
 			or.funcDepth--
+			if fd.Recv == nil && fd.Name != nil && fd.Name.Name == "init" && or.initDepth > 0 {
+				or.initDepth--
+			}
 		}
 		node, ok := cursor.Node().(ast.Expr)
 		if !ok {
@@ -254,7 +260,7 @@ func obfuscateString(or *obfRand, data string) *ast.CallExpr {
 			),
 		),
 	}
-	if GuardBoolName != "" && or.funcDepth > 0 {
+	if GuardBoolName != "" && or.funcDepth > 0 && or.initDepth == 0 {
 
 		block.List = append(block.List, guardActiveCheck(GuardBoolName))
 	}
@@ -270,7 +276,7 @@ func obfuscateByteSlice(or *obfRand, isPointer bool, data []byte) *ast.CallExpr 
 	params, args := extKeysToParams(or, extKeys)
 
 	if isPointer {
-		if GuardBoolName != "" && or.funcDepth > 0 {
+		if GuardBoolName != "" && or.funcDepth > 0 && or.initDepth == 0 {
 			block.List = append(block.List, guardActiveCheck(GuardBoolName))
 		}
 		block.List = append(block.List, ah.ReturnStmt(
@@ -279,7 +285,7 @@ func obfuscateByteSlice(or *obfRand, isPointer bool, data []byte) *ast.CallExpr 
 		return ah.LambdaCall(params, ah.StarExpr(ah.ByteSliceType()), block, args)
 	}
 
-	if GuardBoolName != "" && or.funcDepth > 0 {
+	if GuardBoolName != "" && or.funcDepth > 0 && or.initDepth == 0 {
 		block.List = append(block.List, guardActiveCheck(GuardBoolName))
 	}
 	block.List = append(block.List, ah.ReturnStmt(ast.NewIdent("data")))
@@ -325,7 +331,7 @@ func obfuscateByteArray(or *obfRand, isPointer bool, data []byte, length int64) 
 
 	retStmt := ah.ReturnStmt(retexpr)
 
-	if GuardBoolName != "" && or.funcDepth > 0 {
+	if GuardBoolName != "" && or.funcDepth > 0 && or.initDepth == 0 {
 		block.List = append(block.List, sliceToArray...)
 		block.List = append(block.List, guardActiveCheck(GuardBoolName))
 		block.List = append(block.List, retStmt)

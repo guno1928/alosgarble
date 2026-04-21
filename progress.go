@@ -145,9 +145,9 @@ func (pb *progressBar) draw(done int, current string) {
 	}
 
 	if pb.drawn == 0 {
-		fmt.Fprint(os.Stderr, "\x1b7")
+		fmt.Fprint(os.Stderr, "\x1b[2J\x1b[H")
 	} else {
-		fmt.Fprint(os.Stderr, "\x1b8")
+		fmt.Fprint(os.Stderr, "\x1b[H")
 	}
 	for _, l := range lines {
 		fmt.Fprintf(os.Stderr, "\r\033[K%s\n", l)
