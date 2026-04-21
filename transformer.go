@@ -996,6 +996,15 @@ func (tf *transformer) processImportCfg(flags []string, requiredPkgs []string) (
 	}
 
 	if len(newIndirectImports) > 0 {
+		for pkg := range newIndirectImports {
+			if lpkg := sharedCache.ListedPackages[pkg]; lpkg != nil && lpkg.Export != "" && !lpkg.ToObfuscate {
+				packagefiles = append(packagefiles, [2]string{pkg, lpkg.Export})
+				delete(newIndirectImports, pkg)
+			}
+		}
+	}
+
+	if len(newIndirectImports) > 0 {
 		f, err := os.Open(filepath.Join(sharedTempDir, actionGraphFileName))
 		if err != nil {
 			return "", fmt.Errorf("cannot open action graph file: %v", err)

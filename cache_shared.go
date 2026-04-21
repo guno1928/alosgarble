@@ -1,6 +1,3 @@
-
-
-
 package main
 
 import (
@@ -23,59 +20,33 @@ import (
 
 //go:generate go run scripts/gen_go_std_tables.go
 
-
-
-
-
-
-
 type sharedCacheType struct {
-	ForwardBuildFlags []string 
+	ForwardBuildFlags []string
 
-	CacheDir string 
+	CacheDir string
 
-	
-	
-	
 	ListedPackages map[string]*listedPackage
 
-	
-	
-	
-	
-	
-	
 	BinaryContentID []byte
 
 	GOGARBLE string
 
-	
-	
 	GoCmd string
 
-	
-	
 	GoEnv struct {
-		GOOS   string 
-		GOARCH string 
+		GOOS   string
+		GOARCH string
 
 		GOVERSION string
 		GOROOT    string
 	}
 
-	
-	
 	MainModulePath string
 
-	
-	
-	
-	
 	GarbleGuardPkgs map[string]bool
 }
 
 var sharedCache *sharedCacheType
-
 
 func loadSharedCache() error {
 	if sharedCache != nil {
@@ -95,8 +66,6 @@ func loadSharedCache() error {
 	}
 	return nil
 }
-
-
 
 func saveSharedCache() (string, error) {
 	if sharedCache == nil {
@@ -135,7 +104,7 @@ func writeGobExclusive(name string, val any) error {
 	if err != nil {
 		return err
 	}
-	
+
 	err = gob.NewEncoder(f).Encode(val)
 	if err2 := f.Close(); err == nil {
 		err = err2
@@ -143,13 +112,10 @@ func writeGobExclusive(name string, val any) error {
 	return err
 }
 
-
 type listedPackageModule struct {
 	Path    string
 	Version string
 }
-
-
 
 type listedPackage struct {
 	Name       string
@@ -161,32 +127,18 @@ type listedPackage struct {
 	Standard   bool
 
 	Dir             string
-	CompiledGoFiles []string 
-	SFiles          []string 
+	CompiledGoFiles []string
+	SFiles          []string
 	Imports         []string
 
-	
 	Module *listedPackageModule
 
-	Error *packageError 
+	Error *packageError
 
-	
-	
-	
-
-	
-	
-	
 	allDeps map[string]struct{}
 
-	
-	
-	
-	
 	GarbleActionID [sha256.Size]byte `json:"-"`
 
-	
-	
 	ToObfuscate bool `json:"-"`
 }
 
@@ -202,15 +154,14 @@ func (p *listedPackage) hasDep(path string) bool {
 func (p *listedPackage) addImportsFrom(from *listedPackage) {
 	for _, path := range from.Imports {
 		if path == "C" {
-			
-			
+
 			continue
 		}
 		if path2 := from.ImportMap[path]; path2 != "" {
 			path = path2
 		}
 		if _, ok := p.allDeps[path]; ok {
-			continue 
+			continue
 		}
 		p.allDeps[path] = struct{}{}
 		p.addImportsFrom(sharedCache.ListedPackages[path])
@@ -222,27 +173,17 @@ type packageError struct {
 	Err string
 }
 
-
-
-
 func (p *listedPackage) obfuscatedPackageName() string {
 	if p.Name == "main" || !p.ToObfuscate {
 		return p.Name
 	}
-	
+
 	return hashWithPackage(p, p.Name)
 }
-
-
-
 
 func (p *listedPackage) obfuscatedSourceDir() string {
 	return hashWithPackage(p, p.ImportPath)
 }
-
-
-
-
 
 func (p *listedPackage) obfuscatedImportPath() string {
 	if p.Name == "main" && p.ForTest == "" {
@@ -251,33 +192,20 @@ func (p *listedPackage) obfuscatedImportPath() string {
 	if !p.ToObfuscate {
 		return p.ImportPath
 	}
-	
-	
-	
-	
-	
-	
-	
+
 	switch p.ImportPath {
 	case "runtime", "reflect", "embed",
-		
-		
+
 		"internal/runtime/syscall/linux",
 		"internal/runtime/syscall/windows",
 		"internal/runtime/startlinetest":
 		return p.ImportPath
 	}
-	
+
 	if _, ok := compilerIntrinsics[p.ImportPath]; ok {
 		return p.ImportPath
 	}
-	
-	
-	
-	
-	
-	
-	
+
 	if _, ok := runtimeAndLinknamed[p.ImportPath]; ok {
 		return p.ImportPath
 	}
@@ -287,35 +215,24 @@ func (p *listedPackage) obfuscatedImportPath() string {
 	return newPath
 }
 
-
-
 var garbleBuildFlags = []string{"-trimpath", "-buildvcs=false"}
-
-
 
 func appendListedPackages(packages []string, mainBuild bool) error {
 	startTime := time.Now()
 	args := []string{
 		"list",
-		
+
 		"-json", "-export", "-compiled", "-e",
 	}
 	if mainBuild {
-		
-		
-		
-		
+
 		args = append(args, "-deps")
 	}
 	args = append(args, garbleBuildFlags...)
 	args = append(args, sharedCache.ForwardBuildFlags...)
 
 	if !mainBuild {
-		
-		
-		
-		
-		
+
 		args = slices.DeleteFunc(args, func(arg string) bool {
 			return strings.HasPrefix(arg, "-mod=") || strings.HasPrefix(arg, "-modfile=")
 		})
@@ -353,12 +270,9 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 
 		if perr := pkg.Error; perr != nil {
 			if !mainBuild && strings.Contains(perr.Err, "build constraints exclude all Go files") {
-				
-				
-				
+
 			} else if !mainBuild && strings.Contains(perr.Err, "is not in std") {
-				
-				
+
 			} else {
 				if pkgErrors.Len() > 0 {
 					pkgErrors.WriteString("\n")
@@ -367,17 +281,11 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 					pkgErrors.WriteString(perr.Pos)
 					pkgErrors.WriteString(": ")
 				}
-				
+
 				pkgErrors.WriteString(strings.TrimRight(perr.Err, "\n"))
 			}
 		}
 
-		
-		
-		
-		
-		
-		
 		if sharedCache.ListedPackages[pkg.ImportPath] != nil {
 			return fmt.Errorf("duplicate package: %q", pkg.ImportPath)
 		}
@@ -398,26 +306,20 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 
 	anyToObfuscate := false
 	for path, pkg := range sharedCache.ListedPackages {
-		
+
 		if pkg.ForTest != "" {
 			path = pkg.ForTest
 		}
 		switch {
-		
+
 		case runtimeAndDeps[path],
-			
+
 			path == "runtime/cgo",
-			
-			
-			
-			
+
 			path == "crypto/internal/fips140", strings.HasPrefix(path, "crypto/internal/fips140/"):
 
-		
 		case len(pkg.CompiledGoFiles) == 0:
 
-		
-		
 		case pkg.Name == "main" && strings.HasSuffix(path, ".test"),
 			path == "command-line-arguments",
 			strings.HasPrefix(path, "plugin/unnamed"),
@@ -431,14 +333,12 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 		}
 	}
 
-	
 	if !anyToObfuscate && !module.MatchPrefixPatterns(sharedCache.GOGARBLE, "runtime") {
 		return fmt.Errorf("GOGARBLE=%q does not match any packages to be built", sharedCache.GOGARBLE)
 	}
 
-	
 	if mainBuild {
-		
+
 		for _, pkg := range sharedCache.ListedPackages {
 			if pkg.Name == "main" && pkg.ForTest == "" && pkg.Module != nil && pkg.Module.Path != "" {
 				sharedCache.MainModulePath = pkg.Module.Path
@@ -447,7 +347,7 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 		}
 		sharedCache.GarbleGuardPkgs = make(map[string]bool)
 		if sharedCache.MainModulePath != "" {
-			
+
 			for _, pkg := range sharedCache.ListedPackages {
 				if !pkg.ToObfuscate || pkg.Standard || pkg.ForTest != "" {
 					continue
@@ -456,9 +356,7 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 					sharedCache.GarbleGuardPkgs[pkg.ImportPath] = true
 				}
 			}
-			
-			
-			
+
 			for _, pkg := range sharedCache.ListedPackages {
 				if pkg.Module == nil || pkg.Module.Path != sharedCache.MainModulePath {
 					continue
@@ -472,7 +370,7 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 				}
 			}
 		} else {
-			
+
 			for _, pkg := range sharedCache.ListedPackages {
 				if pkg.Name == "main" && pkg.ForTest == "" && pkg.ToObfuscate {
 					sharedCache.GarbleGuardPkgs[pkg.ImportPath] = true
@@ -490,29 +388,17 @@ var ErrNotFound = errors.New("not found")
 
 var ErrNotDependency = errors.New("not a dependency")
 
-
 func listPackage(from *listedPackage, path string) (*listedPackage, error) {
 	if path == from.ImportPath {
 		return from, nil
 	}
 
-	
-	
-	
 	if path2 := from.ImportMap[path]; path2 != "" {
 		path = path2
 	}
 
 	pkg, ok := sharedCache.ListedPackages[path]
 
-	
-	
-	
-	
-	
-	
-	
-	
 	if from.Standard {
 		if ok {
 			return pkg, nil
@@ -525,18 +411,17 @@ func listPackage(from *listedPackage, path string) (*listedPackage, error) {
 		for linknamed := range runtimeAndLinknamed {
 			switch {
 			case sharedCache.ListedPackages[linknamed] != nil:
-				
+
 			case sharedCache.GoEnv.GOOS != "js" && linknamed == "syscall/js":
-				
+
 			case sharedCache.GoEnv.GOOS != "darwin" && sharedCache.GoEnv.GOOS != "ios" && linknamed == "crypto/x509/internal/macos":
-				
+
 			default:
 				missing = append(missing, linknamed)
 			}
 		}
-		slices.Sort(missing) 
+		slices.Sort(missing)
 
-		
 		if err := appendListedPackages(missing, false); err != nil {
 			return nil, fmt.Errorf("failed to load missing runtime-linknamed packages: %v", err)
 		}
@@ -552,16 +437,10 @@ func listPackage(from *listedPackage, path string) (*listedPackage, error) {
 		return nil, fmt.Errorf("list %s: %w", path, ErrNotFound)
 	}
 
-	
-	
 	if from.hasDep(pkg.ImportPath) {
 		return pkg, nil
 	}
 
-	
-	
-	
-	
 	if pkg.ImportPath == "runtime" {
 		return pkg, nil
 	}

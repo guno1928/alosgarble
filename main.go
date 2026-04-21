@@ -169,12 +169,7 @@ func main() {
 	flagTiny = true
 	log.SetPrefix("[garble] ")
 	log.SetFlags(0)
-	if flagDebug {
-
-		log.SetOutput(&uniqueLineWriter{out: os.Stderr})
-	} else {
-		log.SetOutput(io.Discard)
-	}
+	log.SetOutput(io.Discard)
 	args := flagSet.Args()
 	if len(args) < 1 {
 		usage()
@@ -284,7 +279,19 @@ func mainErr(args []string) error {
 			return buildErr
 		}
 		if command == "build" {
-			if outPath := flagValue(buildArgs, "-o"); outPath != "" {
+			outPath := flagValue(buildArgs, "-o")
+			if outPath == "" {
+				for _, pkg := range sharedCache.ListedPackages {
+					if pkg.Name == "main" && !pkg.Standard {
+						outPath = filepath.Base(pkg.Dir)
+						if runtime.GOOS == "windows" {
+							outPath += ".exe"
+						}
+						break
+					}
+				}
+			}
+			if outPath != "" {
 				if err := patchOutputBinary(outPath); err != nil {
 					return fmt.Errorf("patching output binary: %v", err)
 				}
@@ -473,7 +480,7 @@ This command wraps "go %s". Below is its help:
 	toolexecFlag.WriteString(" toolexec")
 	goArgs = append(goArgs, toolexecFlag.String())
 
-	if flagControlFlow {
+	if flagControlFlow || flagDebug {
 		goArgs = append(goArgs, "-debug-actiongraph", filepath.Join(sharedTempDir, actionGraphFileName))
 	}
 	if flagDebugDir != "" {

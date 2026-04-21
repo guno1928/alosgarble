@@ -100,16 +100,14 @@ func appendFlags(w io.Writer, forBuildHash bool) {
 	if flagTiny {
 		io.WriteString(w, " -tiny")
 	}
-	if flagDebug && !forBuildHash {
-
+	if flagDebug {
 		io.WriteString(w, " -debug")
 	}
 	if flagDebugDir != "" && !forBuildHash {
-
 		io.WriteString(w, " -debugdir=")
 		io.WriteString(w, flagDebugDir)
 	}
-	if flagDebugPassword != "" && !forBuildHash {
+	if flagDebugPassword != "" {
 		io.WriteString(w, " -debugpassword=")
 		io.WriteString(w, flagDebugPassword)
 	}
