@@ -313,8 +313,6 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 		switch {
 
 		case runtimeAndDeps[path],
-			pkg.Standard,
-
 			path == "runtime/cgo",
 
 			path == "crypto/internal/fips140", strings.HasPrefix(path, "crypto/internal/fips140/"):

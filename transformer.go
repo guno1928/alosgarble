@@ -1003,15 +1003,6 @@ func (tf *transformer) processImportCfg(flags []string, requiredPkgs []string) (
 	}
 
 	if len(newIndirectImports) > 0 {
-		for pkg := range newIndirectImports {
-			if lpkg := sharedCache.ListedPackages[pkg]; lpkg != nil && lpkg.Export != "" && !lpkg.ToObfuscate {
-				packagefiles = append(packagefiles, [2]string{pkg, lpkg.Export})
-				delete(newIndirectImports, pkg)
-			}
-		}
-	}
-
-	if len(newIndirectImports) > 0 {
 		f, err := os.Open(filepath.Join(sharedTempDir, actionGraphFileName))
 		if err != nil {
 			return "", fmt.Errorf("cannot open action graph file: %v", err)
@@ -1034,24 +1025,29 @@ func (tf *transformer) processImportCfg(flags []string, requiredPkgs []string) (
 			if ok := newIndirectImports[action.Package]; !ok {
 				continue
 			}
-			var pkgPath string
-			if action.Objdir != "" {
-				pkgPath = filepath.Join(action.Objdir, "_pkg_.a")
-			} else if lpkg := sharedCache.ListedPackages[action.Package]; lpkg != nil && lpkg.Export != "" {
-				pkgPath = lpkg.Export
-			} else {
+			if action.Objdir == "" {
 				continue
 			}
+			pkgPath := filepath.Join(action.Objdir, "_pkg_.a")
 			packagefiles = append(packagefiles, [2]string{action.Package, pkgPath})
 			delete(newIndirectImports, action.Package)
 			if len(newIndirectImports) == 0 {
 				break
 			}
 		}
+	}
 
-		if len(newIndirectImports) > 0 {
-			return "", fmt.Errorf("cannot resolve required packages from action graph file: %v", requiredPkgs)
+	if len(newIndirectImports) > 0 {
+		for pkg := range newIndirectImports {
+			if lpkg := sharedCache.ListedPackages[pkg]; lpkg != nil && lpkg.Export != "" && !lpkg.ToObfuscate {
+				packagefiles = append(packagefiles, [2]string{pkg, lpkg.Export})
+				delete(newIndirectImports, pkg)
+			}
 		}
+	}
+
+	if len(newIndirectImports) > 0 {
+		return "", fmt.Errorf("cannot resolve required packages from action graph file: %v", requiredPkgs)
 	}
 
 	for _, pair := range packagefiles {
@@ -1376,6 +1372,7 @@ func (tf *transformer) transformLink(args []string) ([]string, error) {
 }
 
 func applyDebugTransforms(file *ast.File) {
+	replacedOsExit := false
 	astutil.Apply(file, func(c *astutil.Cursor) bool {
 		switch node := c.Node().(type) {
 		case *ast.FuncDecl:
@@ -1398,10 +1395,32 @@ func applyDebugTransforms(file *ast.File) {
 					Fun:  ast.NewIdent("_garbleDbgExit"),
 					Args: node.Args,
 				})
+				replacedOsExit = true
 			}
 		}
 		return true
 	}, nil)
+	if replacedOsExit {
+		hasOsImport := false
+		for _, imp := range file.Imports {
+			if imp.Path.Value == `"os"` && (imp.Name == nil || (imp.Name.Name != "_" && imp.Name.Name != ".")) {
+				hasOsImport = true
+				break
+			}
+		}
+		if hasOsImport {
+			file.Decls = append(file.Decls, &ast.GenDecl{
+				Tok: token.VAR,
+				Specs: []ast.Spec{&ast.ValueSpec{
+					Names: []*ast.Ident{ast.NewIdent("_")},
+					Values: []ast.Expr{&ast.SelectorExpr{
+						X:   ast.NewIdent("os"),
+						Sel: ast.NewIdent("Exit"),
+					}},
+				}},
+			})
+		}
+	}
 }
 
 func generateDebugPkgSource(pkgName string) string {
