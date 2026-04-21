@@ -605,6 +605,7 @@ garble was built with %q and can't be used with the newer %q; rebuild it with a 
 func usage() {
 	fmt.Fprint(os.Stderr, `
 alosgarble obfuscates Go code by wrapping the Go toolchain.
+	v1.0.3
 
 	alosgarble [alosgarble flags] command [go flags] [go arguments]
 

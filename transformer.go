@@ -626,6 +626,13 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 			files = append(files, guardFile)
 			paths = append(paths, "GARBLE_guard.go")
 			tf.guardInjected = true
+			for _, imp := range guardFile.Imports {
+				path, err := strconv.Unquote(imp.Path.Value)
+				if err != nil {
+					panic(err)
+				}
+				requiredPkgs = append(requiredPkgs, path)
+			}
 		}
 	}
 
@@ -1027,8 +1034,15 @@ func (tf *transformer) processImportCfg(flags []string, requiredPkgs []string) (
 			if ok := newIndirectImports[action.Package]; !ok {
 				continue
 			}
-
-			packagefiles = append(packagefiles, [2]string{action.Package, filepath.Join(action.Objdir, "_pkg_.a")})
+			var pkgPath string
+			if action.Objdir != "" {
+				pkgPath = filepath.Join(action.Objdir, "_pkg_.a")
+			} else if lpkg := sharedCache.ListedPackages[action.Package]; lpkg != nil && lpkg.Export != "" {
+				pkgPath = lpkg.Export
+			} else {
+				continue
+			}
+			packagefiles = append(packagefiles, [2]string{action.Package, pkgPath})
 			delete(newIndirectImports, action.Package)
 			if len(newIndirectImports) == 0 {
 				break
