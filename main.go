@@ -97,14 +97,15 @@ var booleanFlags = map[string]bool{
 }
 
 var flagSet = flag.NewFlagSet("garble", flag.ExitOnError)
-var rxGarbleFlag = regexp.MustCompile(`-(?:literals|tiny|debug|debugdir|seed)(?:$|=)`)
+var rxGarbleFlag = regexp.MustCompile(`-(?:literals|tiny|debug|debugdir|seed|debugpassword)(?:$|=)`)
 
 var (
-	flagLiterals bool
-	flagTiny     bool
-	flagDebug    bool
-	flagDebugDir string
-	flagSeed     seedFlag
+	flagLiterals      bool
+	flagTiny          bool
+	flagDebug         bool
+	flagDebugDir      string
+	flagDebugPassword string
+	flagSeed          seedFlag
 
 	flagControlFlow = os.Getenv("GARBLE_EXPERIMENTAL_CONTROLFLOW") != "0"
 
@@ -122,6 +123,7 @@ func init() {
 	flagTiny = true
 	flagSet.BoolVar(&flagDebug, "debug", false, "Print debug logs to stderr")
 	flagSet.StringVar(&flagDebugDir, "debugdir", "", "Write source and obfuscated trees to a directory, e.g. -debugdir=out")
+	flagSet.StringVar(&flagDebugPassword, "debugpassword", "", "Encrypt debug logs with ChaCha20 using this password; logs go only to file, not terminal")
 	flagSet.Var(&flagSeed, "seed", "Provide a base64-encoded seed, e.g. -seed=o9WDTZ4CN4w\nFor a random seed, provide -seed=random")
 }
 
@@ -239,6 +241,8 @@ func mainErr(args []string) error {
 			fmt.Printf("%16s %s\n", setting.Key, setting.Value)
 		}
 		return nil
+	case "decrypt":
+		return commandDecrypt(args)
 	case "reverse":
 		return commandReverse(args)
 	case "build", "test", "run":

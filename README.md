@@ -287,14 +287,81 @@ alosgarble build -a ./...
 | Flag | Default | Description |
 |---|---|---|
 | `-seed` | random per build | Base64 seed for obfuscation. Use `-seed=random` for a fresh random seed. |
-| `-debug` | off | Print debug logs to stderr |
+| `-debug` | off | Inject a debug runtime into the built binary. On startup the binary prints a banner to stderr and writes all debug events to a `.garbledebug_<pid>.log` file next to the executable. |
+| `-debugpassword <pass>` | off | Requires `-debug`. Encrypt all debug log messages with ChaCha20 using `<pass>` as the key. No output appears on stderr — everything goes to the encrypted log file only. The password constant is itself obfuscated in the binary by WideXOR. |
 | `-debugdir` | off | Write pre/post obfuscation source trees to a directory |
 
 `-literals` and `-tiny` are always forced on and cannot be disabled.
 
 ---
 
-## Debugging a Build
+## Debug Mode
+
+### Plain debug (logs to stderr + file)
+
+```sh
+alosgarble -debug build -o myapp.exe .
+./myapp.exe
+# stderr shows: [GARBLE-DEBUG] ====== PROCESS STARTED ======
+# also written to: myapp.exe.garbledebug_<pid>.log
+```
+
+The injected debug runtime captures:
+- Process startup (PID, executable path, Go version, OS/arch, GOMAXPROCS)
+- Unhandled panics in `main()` with full goroutine stack dump
+- Panics in any `init()` function
+- `os.Exit()` calls with exit code and call stack
+
+### Encrypted debug (log file only, no terminal output)
+
+```sh
+alosgarble -debug -debugpassword mySecretPass build -o myapp.exe .
+./myapp.exe
+# nothing on stderr
+# encrypted log written to: myapp.exe.garbledebug_<pid>.log
+```
+
+Decrypt the log later:
+
+```sh
+alosgarble decrypt -password mySecretPass myapp.exe.garbledebug_12345.log
+```
+
+Output:
+
+```
+[GARBLE-DEBUG] ====== PROCESS STARTED ======
+[GARBLE-DEBUG] PID        : 12345
+[GARBLE-DEBUG] Executable : C:\path\to\myapp.exe
+[GARBLE-DEBUG] Go version : go1.26.2
+[GARBLE-DEBUG] OS/Arch    : windows/amd64
+[GARBLE-DEBUG] GOMAXPROCS : 8
+[GARBLE-DEBUG] Log file   : myapp.exe.garbledebug_12345.log (encrypted)
+[GARBLE-DEBUG] Mode       : password-encrypted — no terminal output
+...
+```
+
+If you supply the wrong password, decryption fails with a clear error:
+
+```
+decryption failed at message 0 — wrong password or corrupted log file
+```
+
+**Encrypted log format:**
+
+| Offset | Size | Content |
+|---|---|---|
+| 0 | 8 bytes | Magic: `ALOSDBG\x01` |
+| 8 | 16 bytes | PID-derived salt |
+| 24+ | repeated | `msgLen[4LE]` + `nonce[12]` + ChaCha20 ciphertext |
+
+Each plaintext block has `ALOS` prepended as a validation token so wrong-password attempts are detected immediately.
+
+The ChaCha20 implementation and 100,000-round key derivation function are fully inlined into the built binary with no extra imports — there is no `golang.org/x/crypto` dependency in your final binary.
+
+---
+
+## Debugging a Build (Source Inspection)
 
 If you want to inspect the generated source before and after obfuscation:
 
@@ -323,6 +390,9 @@ This writes the original and transformed Go AST for every package into `./debug_
 | ASLR-aware guard | ❌ | ✅ (table base address mixed into verification) |
 | Cross-validation chain | ❌ | ✅ (adjacent lookup tables check each other) |
 | Multi-sentinel guard activation | ❌ | ✅ (3 independent booleans + monotonic counter) |
+| Debug runtime injection | ❌ | ✅ (panic/exit capture, startup banner, log file) |
+| Encrypted debug logs | ❌ | ✅ (ChaCha20, inline KDF, no extra imports) |
+| `decrypt` subcommand | ❌ | ✅ (`alosgarble decrypt -password <pass> <logfile>`) |
 
 ---
 
@@ -337,6 +407,9 @@ Our additions:
 - **Decoy literal injection** — 2–4 fake secrets per package, obfuscated identically to real strings
 - **Live build progress display** — animated terminal UI with ETA, package count, and current package name
 - **Performance optimizations** — lookup table encoding switched from composite literals to string ballast, reducing go/types type-check work by ~10–19% on large builds
+- **Debug runtime injection** (`-debug`) — captures panics, `os.Exit` calls, and `init()` failures; writes a startup banner to stderr and a persistent log file next to the executable
+- **Encrypted debug logs** (`-debugpassword`) — ChaCha20-encrypted log-file-only mode; no terminal output; password constant is itself obfuscated by WideXOR in the binary; fully inline crypto with no extra binary imports
+- **`decrypt` subcommand** — `alosgarble decrypt -password <pass> <logfile>` streams all decrypted debug messages; wrong-password detection via per-block validation token
 
 ---
 

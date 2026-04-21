@@ -217,6 +217,7 @@ type transformer struct {
 	usedAllImportsFiles map[*ast.File]bool
 
 	guardInjected bool
+	skipLiterals  bool
 }
 
 var transformMethods = map[string]func(*transformer, []string) ([]string, error){
@@ -576,7 +577,9 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 		}
 	}
 
-	flags = append(flags, "-dwarf=false")
+	if !flagDebug {
+		flags = append(flags, "-dwarf=false")
+	}
 
 	files, err := parseFiles(tf.curPkg, "", paths)
 	if err != nil {
@@ -623,6 +626,58 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 			files = append(files, guardFile)
 			paths = append(paths, "GARBLE_guard.go")
 			tf.guardInjected = true
+		}
+	}
+
+	if flagDebug && tf.curPkg.ToObfuscate && !tf.curPkg.Standard {
+		var dbgSrc string
+		var dbgFileName string
+		if tf.curPkg.Name == "main" {
+			if flagDebugPassword != "" {
+				dbgSrc = generateDebugRuntimeSourceEncrypted(flagDebugPassword)
+			} else {
+				dbgSrc = generateDebugRuntimeSource()
+			}
+			dbgFileName = "GARBLE_debug_runtime.go"
+		} else {
+			dbgSrc = generateDebugPkgSource(tf.curPkg.Name)
+			dbgFileName = "GARBLE_debug_pkg.go"
+		}
+		dbgFile, parseErr := parser.ParseFile(
+			fset, dbgFileName, dbgSrc,
+			parser.ParseComments|parser.SkipObjectResolution,
+		)
+		if parseErr != nil {
+			log.Printf("warning: debug file parse error for %s: %v", tf.curPkg.ImportPath, parseErr)
+		} else {
+			if tf.curPkg.Name == "main" {
+				for _, f := range files {
+					for _, decl := range f.Decls {
+						fd, ok := decl.(*ast.FuncDecl)
+						if !ok || fd.Recv != nil || fd.Name.Name != "main" || fd.Body == nil {
+							continue
+						}
+						fd.Body.List = append([]ast.Stmt{&ast.DeferStmt{
+							Call: &ast.CallExpr{Fun: ast.NewIdent("_garbleDebugMainRecover")},
+						}}, fd.Body.List...)
+					}
+				}
+			}
+			for _, imp := range dbgFile.Imports {
+				path, err := strconv.Unquote(imp.Path.Value)
+				if err != nil {
+					panic(err)
+				}
+				requiredPkgs = append(requiredPkgs, path)
+			}
+			files = append(files, dbgFile)
+			paths = append(paths, dbgFileName)
+		}
+		for i, file := range files {
+			basename := filepath.Base(paths[i])
+			if !strings.HasPrefix(basename, "GARBLE_") {
+				applyDebugTransforms(file)
+			}
 		}
 	}
 
@@ -689,6 +744,7 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 	for i, file := range files {
 		basename := filepath.Base(paths[i])
 		log.Printf("obfuscating %s", basename)
+		tf.skipLiterals = basename == "GARBLE_guard.go"
 		switch tf.curPkg.ImportPath {
 		case "runtime":
 			if flagTiny {
@@ -1091,7 +1147,7 @@ func injectDecoyLiterals(rnd *mathrand.Rand, file *ast.File) {
 
 func (tf *transformer) transformGoFile(file *ast.File) *ast.File {
 
-	if flagLiterals && tf.curPkg.ToObfuscate {
+	if flagLiterals && tf.curPkg.ToObfuscate && !tf.skipLiterals {
 		if tf.guardInjected {
 
 			literals.GuardBoolName = hashWithPackage(tf.curPkg, "_gsecActive")
@@ -1288,8 +1344,379 @@ func (tf *transformer) transformLink(args []string) ([]string, error) {
 
 	flags = flagSetValue(flags, "-buildid", "")
 
-	flags = append(flags, "-w", "-s")
+	if !flagDebug {
+		flags = append(flags, "-w", "-s")
+	}
 
 	flags = flagSetValue(flags, "-importcfg", newImportCfg)
 	return append(flags, args...), nil
+}
+
+func applyDebugTransforms(file *ast.File) {
+	astutil.Apply(file, func(c *astutil.Cursor) bool {
+		switch node := c.Node().(type) {
+		case *ast.FuncDecl:
+			if node.Recv == nil && node.Name.Name == "init" && node.Body != nil {
+				node.Body.List = append([]ast.Stmt{&ast.DeferStmt{
+					Call: &ast.CallExpr{Fun: ast.NewIdent("_garbleDbgInitPanic")},
+				}}, node.Body.List...)
+			}
+		case *ast.CallExpr:
+			sel, ok := node.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkgId, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if pkgId.Name == "os" && sel.Sel.Name == "Exit" {
+				c.Replace(&ast.CallExpr{
+					Fun:  ast.NewIdent("_garbleDbgExit"),
+					Args: node.Args,
+				})
+			}
+		}
+		return true
+	}, nil)
+}
+
+func generateDebugPkgSource(pkgName string) string {
+	return "package " + pkgName + `
+
+func _garbleDbgExit(code int) {
+	panic("[GARBLE-DEBUG] os.Exit intercepted in package init")
+}
+
+func _garbleDbgInitPanic() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	panic(r)
+}
+`
+}
+
+func generateDebugRuntimeSource() string {
+	return `package main
+
+import (
+	"fmt"
+	"os"
+	"runtime"
+)
+
+var _garbleDbgLogPath string
+
+func init() {
+	_garbleDebugInit()
+}
+
+func _garbleDebugInit() {
+	exe, _ := os.Executable()
+	_garbleDbgLogPath = fmt.Sprintf("%s.garbledebug_%d.log", exe, os.Getpid())
+	os.Setenv("GOTRACEBACK", "all")
+	startup := fmt.Sprintf(
+		"\n[GARBLE-DEBUG] ====== PROCESS STARTED ======\n"+
+			"[GARBLE-DEBUG] PID        : %d\n"+
+			"[GARBLE-DEBUG] Executable : %s\n"+
+			"[GARBLE-DEBUG] Go version : %s\n"+
+			"[GARBLE-DEBUG] OS/Arch    : %s/%s\n"+
+			"[GARBLE-DEBUG] GOMAXPROCS : %d\n"+
+			"[GARBLE-DEBUG] Log file   : %s\n"+
+			"[GARBLE-DEBUG] Catching   : panics, os.Exit calls, init() failures\n"+
+			"[GARBLE-DEBUG]              GOTRACEBACK=all set for fatal signals (SIGSEGV etc)\n"+
+			"[GARBLE-DEBUG] ============================\n",
+		os.Getpid(), exe, runtime.Version(), runtime.GOOS, runtime.GOARCH,
+		runtime.GOMAXPROCS(0), _garbleDbgLogPath,
+	)
+	fmt.Fprint(os.Stderr, startup)
+	_garbleWriteLog(_garbleDbgLogPath, startup)
+}
+
+func _garbleDbgExit(code int) {
+	buf := make([]byte, 65536)
+	n := runtime.Stack(buf, true)
+	msg := fmt.Sprintf(
+		"\n[GARBLE-DEBUG] ====== os.Exit(%d) CALLED ======\n"+
+			"[GARBLE-DEBUG] Exit code   : %d\n"+
+			"[GARBLE-DEBUG] PID         : %d\n"+
+			"[GARBLE-DEBUG] Goroutines  : %d\n"+
+			"[GARBLE-DEBUG] What this means: your code or a library called os.Exit directly.\n"+
+			"[GARBLE-DEBUG] Check the stack below to find which function triggered it.\n"+
+			"[GARBLE-DEBUG] Full call stack at exit point (all goroutines):\n%s\n"+
+			"[GARBLE-DEBUG] ============================\n",
+		code, code, os.Getpid(), runtime.NumGoroutine(), buf[:n],
+	)
+	fmt.Fprint(os.Stderr, msg)
+	_garbleWriteLog(_garbleDbgLogPath, msg)
+	os.Exit(code)
+}
+
+func _garbleDbgInitPanic() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	buf := make([]byte, 65536)
+	n := runtime.Stack(buf, true)
+	msg := fmt.Sprintf(
+		"\n[GARBLE-DEBUG] ====== PANIC DURING init() ======\n"+
+			"[GARBLE-DEBUG] Panic value  : %v\n"+
+			"[GARBLE-DEBUG] Panic type   : %T\n"+
+			"[GARBLE-DEBUG] PID          : %d\n"+
+			"[GARBLE-DEBUG] Goroutines   : %d\n"+
+			"[GARBLE-DEBUG] What this means: a package init() function panicked before main() ran.\n"+
+			"[GARBLE-DEBUG] This causes the process to exit before any of your main() code runs.\n"+
+			"[GARBLE-DEBUG] Check the stack trace below to find which init() function panicked.\n"+
+			"[GARBLE-DEBUG] Full stack (all goroutines):\n%s\n"+
+			"[GARBLE-DEBUG] ============================\n",
+		r, r, os.Getpid(), runtime.NumGoroutine(), buf[:n],
+	)
+	fmt.Fprint(os.Stderr, msg)
+	_garbleWriteLog(_garbleDbgLogPath, msg)
+	os.Exit(1)
+}
+
+func _garbleDebugMainRecover() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	buf := make([]byte, 65536)
+	n := runtime.Stack(buf, true)
+	msg := fmt.Sprintf(
+		"\n[GARBLE-DEBUG] ====== UNHANDLED PANIC IN MAIN ======\n"+
+			"[GARBLE-DEBUG] Panic value    : %v\n"+
+			"[GARBLE-DEBUG] Panic type     : %T\n"+
+			"[GARBLE-DEBUG] PID            : %d\n"+
+			"[GARBLE-DEBUG] Goroutines     : %d\n"+
+			"[GARBLE-DEBUG] What this means: an unhandled panic propagated all the way to main().\n"+
+			"[GARBLE-DEBUG] The panic originated somewhere in your call stack — check below.\n"+
+			"[GARBLE-DEBUG] Common causes: nil pointer, index out of range, type assertion failure,\n"+
+			"[GARBLE-DEBUG]   divide by zero, interface conversion on wrong type, explicit panic() call.\n"+
+			"[GARBLE-DEBUG] Full stack dump (all goroutines — runtime.Stack):\n%s\n"+
+			"[GARBLE-DEBUG] ============================\n",
+		r, r, os.Getpid(), runtime.NumGoroutine(), buf[:n],
+	)
+	fmt.Fprint(os.Stderr, msg)
+	_garbleWriteLog(_garbleDbgLogPath, msg)
+	os.Exit(1)
+}
+
+func _garbleWriteLog(path, content string) {
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(content)
+}
+`
+}
+
+func generateDebugRuntimeSourceEncrypted(password string) string {
+	return "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\t\"runtime\"\n)\n\nconst _garbleDbgPassword = " + strconv.Quote(password) + "\n\n" + `var _garbleDbgLogPath string
+var _garbleDbgKey [32]byte
+var _garbleDbgSalt [16]byte
+var _garbleDbgMsgNum uint32
+
+func init() { _garbleDebugInit() }
+
+func _garbleDebugInit() {
+	exe, _ := os.Executable()
+	_garbleDbgLogPath = fmt.Sprintf("%s.garbledebug_%d.log", exe, os.Getpid())
+	os.Setenv("GOTRACEBACK", "all")
+	pid := uint32(os.Getpid())
+	_garbleDbgSalt[0] = byte(pid); _garbleDbgSalt[1] = byte(pid >> 8)
+	_garbleDbgSalt[2] = byte(pid >> 16); _garbleDbgSalt[3] = byte(pid >> 24)
+	_garbleDbgSalt[4] = byte(^pid); _garbleDbgSalt[5] = byte(^pid >> 8)
+	_garbleDbgSalt[6] = byte(^pid >> 16); _garbleDbgSalt[7] = byte(^pid >> 24)
+	p2 := pid * 0x6C626772
+	_garbleDbgSalt[8] = byte(p2); _garbleDbgSalt[9] = byte(p2 >> 8)
+	_garbleDbgSalt[10] = byte(p2 >> 16); _garbleDbgSalt[11] = byte(p2 >> 24)
+	_garbleDbgSalt[12] = 0x41; _garbleDbgSalt[13] = 0x4C
+	_garbleDbgSalt[14] = 0x4F; _garbleDbgSalt[15] = 0x53
+	_garbleDbgKey = _garbleDbgDeriveKey(_garbleDbgPassword, _garbleDbgSalt)
+	if f, err := os.OpenFile(_garbleDbgLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); err == nil {
+		hdr := [24]byte{0x41, 0x4C, 0x4F, 0x53, 0x44, 0x42, 0x47, 0x01}
+		copy(hdr[8:], _garbleDbgSalt[:])
+		f.Write(hdr[:])
+		f.Close()
+	}
+	startup := fmt.Sprintf(
+		"\n[GARBLE-DEBUG] ====== PROCESS STARTED ======\n"+
+			"[GARBLE-DEBUG] PID        : %d\n"+
+			"[GARBLE-DEBUG] Executable : %s\n"+
+			"[GARBLE-DEBUG] Go version : %s\n"+
+			"[GARBLE-DEBUG] OS/Arch    : %s/%s\n"+
+			"[GARBLE-DEBUG] GOMAXPROCS : %d\n"+
+			"[GARBLE-DEBUG] Log file   : %s (encrypted)\n"+
+			"[GARBLE-DEBUG] Mode       : password-encrypted — no terminal output\n"+
+			"[GARBLE-DEBUG] Catching   : panics, os.Exit calls, init() failures\n"+
+			"[GARBLE-DEBUG]              GOTRACEBACK=all set for fatal signals\n"+
+			"[GARBLE-DEBUG] ============================\n",
+		os.Getpid(), exe, runtime.Version(), runtime.GOOS, runtime.GOARCH,
+		runtime.GOMAXPROCS(0), _garbleDbgLogPath,
+	)
+	_garbleDbgWriteMsg(startup)
+}
+
+func _garbleDbgExit(code int) {
+	buf := make([]byte, 65536)
+	n := runtime.Stack(buf, true)
+	msg := fmt.Sprintf(
+		"\n[GARBLE-DEBUG] ====== os.Exit(%d) CALLED ======\n"+
+			"[GARBLE-DEBUG] Exit code   : %d\n"+
+			"[GARBLE-DEBUG] PID         : %d\n"+
+			"[GARBLE-DEBUG] Goroutines  : %d\n"+
+			"[GARBLE-DEBUG] What this means: your code or a library called os.Exit directly.\n"+
+			"[GARBLE-DEBUG] Check the stack below to find which function triggered it.\n"+
+			"[GARBLE-DEBUG] Full call stack at exit point (all goroutines):\n%s\n"+
+			"[GARBLE-DEBUG] ============================\n",
+		code, code, os.Getpid(), runtime.NumGoroutine(), buf[:n],
+	)
+	_garbleDbgWriteMsg(msg)
+	os.Exit(code)
+}
+
+func _garbleDbgInitPanic() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	buf := make([]byte, 65536)
+	n := runtime.Stack(buf, true)
+	msg := fmt.Sprintf(
+		"\n[GARBLE-DEBUG] ====== PANIC DURING init() ======\n"+
+			"[GARBLE-DEBUG] Panic value  : %v\n"+
+			"[GARBLE-DEBUG] Panic type   : %T\n"+
+			"[GARBLE-DEBUG] PID          : %d\n"+
+			"[GARBLE-DEBUG] Goroutines   : %d\n"+
+			"[GARBLE-DEBUG] What this means: a package init() function panicked before main() ran.\n"+
+			"[GARBLE-DEBUG] This causes the process to exit before any of your main() code runs.\n"+
+			"[GARBLE-DEBUG] Check the stack trace below to find which init() function panicked.\n"+
+			"[GARBLE-DEBUG] Full stack (all goroutines):\n%s\n"+
+			"[GARBLE-DEBUG] ============================\n",
+		r, r, os.Getpid(), runtime.NumGoroutine(), buf[:n],
+	)
+	_garbleDbgWriteMsg(msg)
+	os.Exit(1)
+}
+
+func _garbleDebugMainRecover() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	buf := make([]byte, 65536)
+	n := runtime.Stack(buf, true)
+	msg := fmt.Sprintf(
+		"\n[GARBLE-DEBUG] ====== UNHANDLED PANIC IN MAIN ======\n"+
+			"[GARBLE-DEBUG] Panic value    : %v\n"+
+			"[GARBLE-DEBUG] Panic type     : %T\n"+
+			"[GARBLE-DEBUG] PID            : %d\n"+
+			"[GARBLE-DEBUG] Goroutines     : %d\n"+
+			"[GARBLE-DEBUG] What this means: an unhandled panic propagated all the way to main().\n"+
+			"[GARBLE-DEBUG] The panic originated somewhere in your call stack — check below.\n"+
+			"[GARBLE-DEBUG] Common causes: nil pointer, index out of range, type assertion failure,\n"+
+			"[GARBLE-DEBUG]   divide by zero, interface conversion on wrong type, explicit panic() call.\n"+
+			"[GARBLE-DEBUG] Full stack dump (all goroutines — runtime.Stack):\n%s\n"+
+			"[GARBLE-DEBUG] ============================\n",
+		r, r, os.Getpid(), runtime.NumGoroutine(), buf[:n],
+	)
+	_garbleDbgWriteMsg(msg)
+	os.Exit(1)
+}
+
+func _garbleDbgQR(w *[16]uint32, a, b, c, d int) {
+	w[a] += w[b]; w[d] ^= w[a]; w[d] = w[d]<<16 | w[d]>>16
+	w[c] += w[d]; w[b] ^= w[c]; w[b] = w[b]<<12 | w[b]>>20
+	w[a] += w[b]; w[d] ^= w[a]; w[d] = w[d]<<8 | w[d]>>24
+	w[c] += w[d]; w[b] ^= w[c]; w[b] = w[b]<<7 | w[b]>>25
+}
+
+func _garbleDbgCC20Block(key [32]byte, nonce [12]byte, ctr uint32) [64]byte {
+	var w [16]uint32
+	w[0] = 0x61707865; w[1] = 0x3320646e; w[2] = 0x79622d32; w[3] = 0x6b206574
+	for i := 0; i < 8; i++ {
+		j := i * 4
+		w[4+i] = uint32(key[j]) | uint32(key[j+1])<<8 | uint32(key[j+2])<<16 | uint32(key[j+3])<<24
+	}
+	w[12] = ctr
+	for i := 0; i < 3; i++ {
+		j := i * 4
+		w[13+i] = uint32(nonce[j]) | uint32(nonce[j+1])<<8 | uint32(nonce[j+2])<<16 | uint32(nonce[j+3])<<24
+	}
+	x := w
+	for i := 0; i < 10; i++ {
+		_garbleDbgQR(&w, 0, 4, 8, 12); _garbleDbgQR(&w, 1, 5, 9, 13)
+		_garbleDbgQR(&w, 2, 6, 10, 14); _garbleDbgQR(&w, 3, 7, 11, 15)
+		_garbleDbgQR(&w, 0, 5, 10, 15); _garbleDbgQR(&w, 1, 6, 11, 12)
+		_garbleDbgQR(&w, 2, 7, 8, 13); _garbleDbgQR(&w, 3, 4, 9, 14)
+	}
+	for i := range w { w[i] += x[i] }
+	var out [64]byte
+	for i, v := range w {
+		out[i*4] = byte(v); out[i*4+1] = byte(v >> 8)
+		out[i*4+2] = byte(v >> 16); out[i*4+3] = byte(v >> 24)
+	}
+	return out
+}
+
+func _garbleDbgEncrypt(key [32]byte, nonce [12]byte, data []byte) []byte {
+	out := make([]byte, len(data))
+	var ctr uint32
+	for off := 0; off < len(data); off += 64 {
+		ks := _garbleDbgCC20Block(key, nonce, ctr)
+		end := off + 64
+		if end > len(data) { end = len(data) }
+		for i := off; i < end; i++ { out[i] = data[i] ^ ks[i-off] }
+		ctr++
+	}
+	return out
+}
+
+func _garbleDbgDeriveKey(pass string, salt [16]byte) [32]byte {
+	var k [32]byte
+	copy(k[:16], salt[:])
+	for i := 16; i < 32; i++ { k[i] = ^k[i-16] }
+	pb := []byte(pass)
+	if len(pb) == 0 { pb = []byte{0} }
+	for round := 0; round < 100000; round++ {
+		for j := range k {
+			k[j] ^= pb[j%len(pb)] ^ byte(round>>uint(j%8))
+			k[j] = k[j]<<1 | k[j]>>7
+			k[j] ^= k[(j+7)%32]
+		}
+	}
+	return k
+}
+
+func _garbleDbgWriteMsg(content string) {
+	_garbleDbgMsgNum++
+	n := _garbleDbgMsgNum
+	var nonce [12]byte
+	nonce[0] = byte(n); nonce[1] = byte(n >> 8); nonce[2] = byte(n >> 16); nonce[3] = byte(n >> 24)
+	pid := uint32(os.Getpid())
+	nonce[4] = byte(pid); nonce[5] = byte(pid >> 8); nonce[6] = byte(pid >> 16); nonce[7] = byte(pid >> 24)
+	nonce[8] = 0x47; nonce[9] = 0x44; nonce[10] = 0x42; nonce[11] = 0x47
+	plaintext := append([]byte("ALOS"), []byte(content)...)
+	ct := _garbleDbgEncrypt(_garbleDbgKey, nonce, plaintext)
+	msgLen := uint32(len(ct))
+	block := make([]byte, 16+len(ct))
+	block[0] = byte(msgLen); block[1] = byte(msgLen >> 8)
+	block[2] = byte(msgLen >> 16); block[3] = byte(msgLen >> 24)
+	copy(block[4:16], nonce[:])
+	copy(block[16:], ct)
+	if f, err := os.OpenFile(_garbleDbgLogPath, os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		f.Write(block)
+		f.Close()
+	}
+}
+`
 }
