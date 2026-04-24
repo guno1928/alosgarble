@@ -601,10 +601,13 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 			ballastScale = 0.33
 		}
 		if len(sharedCache.GarbleGuardPkgs) >= 6 {
-			ballastScale = 0.13
+			ballastScale = 0.19
 		}
 		if len(sharedCache.GarbleGuardPkgs) >= 9 {
-			ballastScale = 0.07
+			ballastScale = 0.13
+		}
+		if len(sharedCache.GarbleGuardPkgs) >= 15 {
+			ballastScale = 0.08
 		}
 		var guardSrc string
 

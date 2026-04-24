@@ -12,23 +12,23 @@ const (
 	guardTablesVar    = 18
 	guardTableSize    = 5600
 	guardTableSizeVar = 2400
-	guardHeavy        = 50
-	guardHeavyVar     = 50
-	guardMedium       = 50
-	guardMediumVar    = 50
-	guardLight        = 50
-	guardLightVar     = 45000
+	guardHeavy        = 55
+	guardHeavyVar     = 55
+	guardMedium       = 55
+	guardMediumVar    = 55
+	guardLight        = 35000
+	guardLightVar     = 35000
 
 	ballastTables       = 36
 	ballastTablesVar    = 248
 	ballastTableSize    = 5600
 	ballastTableSizeVar = 3400
-	ballastHeavy        = 50
-	ballastHeavyVar     = 50
-	ballastMedium       = 50
-	ballastMediumVar    = 50
-	ballastLight        = 50
-	ballastLightVar     = 45000
+	ballastHeavy        = 20
+	ballastHeavyVar     = 20
+	ballastMedium       = 20
+	ballastMediumVar    = 20
+	ballastLight        = 1000
+	ballastLightVar     = 1000
 )
 
 type tableFLEntry struct {
@@ -773,6 +773,105 @@ func (g *ggen) emitBallastFunctions(tableNames []string, numHeavy, numMedium, nu
 	return names
 }
 
+// emitDeadVars emits variable declarations that look complex but compile to nothing.
+// The variables are declared but never read — Go compiler eliminates them entirely.
+// All patterns use safe, non-overflowing Go syntax.
+func (g *ggen) emitDeadVars(count int) {
+	for i := 0; i < count; i++ {
+		n := g.fresh()
+		switch g.r.Intn(5) {
+		case 0:
+			g.wf("\t_ = 0\n")
+		case 1:
+			g.wf("\t%s := uint64(0)\n", n)
+			g.wf("\t_ = %s\n", n)
+		case 2:
+			g.wf("\tvar %s uint64\n", n)
+			g.wf("\t_ = %s\n", n)
+		case 3:
+			g.wf("\t%s := false\n", n)
+			g.wf("\t_ = %s\n", n)
+		case 4:
+			g.wf("\tvar %s string\n", n)
+			g.wf("\t_ = %s\n", n)
+		}
+	}
+}
+
+// emitDeadCode emits a block of dead code that the compiler eliminates.
+// It looks like real control flow but always resolves to a no-op.
+func (g *ggen) emitDeadCode() {
+	n := g.fresh()
+	k1 := g.u64()
+	switch g.r.Intn(6) {
+	case 0:
+		g.wf("\tif false {\n")
+		g.wf("\t\t%s := uint64(0)\n", n)
+		g.wf("\t\t_ = %s\n", n)
+		g.wf("\t}\n")
+	case 1:
+		g.wf("\tfor false {\n")
+		g.wf("\t\t%s := uint64(0)\n", n)
+		g.wf("\t\t_ = %s\n", n)
+		g.wf("\t\tbreak\n")
+		g.wf("\t}\n")
+	case 2:
+		g.wf("\tswitch false {\n")
+		g.wf("\tcase true:\n")
+		g.wf("\t\t%s := uint64(0)\n", n)
+		g.wf("\t\t_ = %s\n", n)
+		g.wf("\tdefault:\n")
+		g.wf("\t\t%s := uint64(1)\n", n)
+		g.wf("\t\t_ = %s\n", n)
+		g.wf("\t}\n")
+	case 3:
+		g.wf("\t_ = uint64(0) & uint64(%s)\n", k1)
+	case 4:
+		g.wf("\t_ = uint64(0) * uint64(%s)\n", k1)
+	case 5:
+		g.wf("\t_ = uint64(%s) ^ uint64(%s)\n", k1, k1)
+	}
+}
+
+// emitComplexOp wraps a simple operation in a complex-looking but equivalent expression.
+// The extra syntax bloats the source but compiles to the same machine code.
+// op must be a valid Go statement suffix like "= expr" or "^= expr".
+func (g *ggen) emitComplexOp(target string, op string) {
+	// Only use _tmp wrapping for simple "= expr" assignments.
+	isSimpleAssign := len(op) >= 2 && op[0] == '=' && op[1] == ' '
+
+	switch g.r.Intn(4) {
+	case 0:
+		// Direct emission (baseline)
+		g.wf("\t%s %s\n", target, op)
+	case 1:
+		if isSimpleAssign {
+			// Wrap RHS in a temporary variable declaration block
+			g.wf("\t{ _tmp :=%s; %s = _tmp }\n", op[1:], target)
+		} else {
+			g.wf("\t%s %s\n", target, op)
+		}
+	case 2:
+		// Use an if with always-true condition (avoid large untyped constants)
+		g.wf("\tif true { %s %s }\n", target, op)
+	case 3:
+		// Use a for loop that runs exactly once
+		g.wf("\tfor _once := 0; _once < 1; _once++ { %s %s }\n", target, op)
+	}
+}
+
+// emitComplexIf emits an if statement wrapped in confusing syntax.
+func (g *ggen) emitComplexIf(cond string, body string) {
+	switch g.r.Intn(3) {
+	case 0:
+		g.wf("\tif %s { %s }\n", cond, body)
+	case 1:
+		g.wf("\tif %s { %s } else { _ = uint64(0) }\n", cond, body)
+	case 2:
+		g.wf("\t{ _c := %s; if _c { %s } }\n", cond, body)
+	}
+}
+
 func (g *ggen) emitHeavyBallast(name string, tables []string) {
 	tbl1 := tables[g.r.Intn(len(tables))]
 	tbl2 := tables[g.r.Intn(len(tables))]
@@ -783,36 +882,41 @@ func (g *ggen) emitHeavyBallast(name string, tables []string) {
 	g.wf("func %s(x uint64) uint64 {\n", name)
 	g.wf("\tacc := x ^ %s\n", g.u64())
 	g.wf("\tb := x * %s\n", g.ou64())
+	g.emitDeadVars(2 + g.r.Intn(3))
 
 	for i := 0; i < numOps; i++ {
 		switch g.r.Intn(10) {
 		case 0:
-			g.wf("\tacc ^= %s[acc&%d] + b\n", tbl1, m)
+			g.emitComplexOp("acc", fmt.Sprintf("^= %s[acc&%d] + b", tbl1, m))
 		case 1:
-			g.wf("\tacc = acc*%s ^ %s[b&%d]\n", g.ou64(), tbl2, m)
+			g.emitComplexOp("acc", fmt.Sprintf("= acc*%s ^ %s[b&%d]", g.ou64(), tbl2, m))
 		case 2:
 			r := g.rot()
-			g.wf("\tacc = (acc<<%d)|(acc>>%d)\n", r, 64-r)
+			g.emitComplexOp("acc", fmt.Sprintf("= (acc<<%d)|(acc>>%d)", r, 64-r))
 		case 3:
-			g.wf("\tb ^= %s[b&%d] ^ acc\n", tbl1, m)
+			g.emitComplexOp("b", fmt.Sprintf("^= %s[b&%d] ^ acc", tbl1, m))
 		case 4:
-			g.wf("\tacc += %s[(acc^b)&%d]\n", tbl2, m)
+			g.emitComplexOp("acc", fmt.Sprintf("+= %s[(acc^b)&%d]", tbl2, m))
 		case 5:
 			r := g.rot()
-			g.wf("\tb = (b<<%d)|(b>>%d) ^ acc\n", r, 64-r)
+			g.emitComplexOp("b", fmt.Sprintf("= (b<<%d)|(b>>%d) ^ acc", r, 64-r))
 		case 6:
-			g.wf("\tacc, b = b, acc+b*%s\n", g.ou64())
+			g.emitComplexOp("acc", fmt.Sprintf(", b = b, acc+b*%s", g.ou64()))
 		case 7:
-			g.wf("\tacc ^= %s[acc&%d] ^ %s[b&%d] ^ %s[(acc>>32)&%d]\n",
-				tbl1, m, tbl2, m, tbl3, m)
+			g.emitComplexOp("acc", fmt.Sprintf("^= %s[acc&%d] ^ %s[b&%d] ^ %s[(acc>>32)&%d]",
+				tbl1, m, tbl2, m, tbl3, m))
 		case 8:
-			g.wf("\tif %s[acc&%d]|%s[b&%d]|%s[(acc>>32)&%d] != 0 { acc ^= %s }\n",
-				tbl1, m, tbl2, m, tbl3, m, g.u64())
+			g.emitComplexIf(fmt.Sprintf("%s[acc&%d]|%s[b&%d]|%s[(acc>>32)&%d] != 0", tbl1, m, tbl2, m, tbl3, m),
+				fmt.Sprintf("acc ^= %s", g.u64()))
 		case 9:
 			r := g.rot()
-			g.wf("\tacc = ((acc<<%d)|(acc>>%d)) + b*%s\n", r, 64-r, g.ou64())
+			g.emitComplexOp("acc", fmt.Sprintf("= ((acc<<%d)|(acc>>%d)) + b*%s", r, 64-r, g.ou64()))
+		}
+		if i%7 == 0 {
+			g.emitDeadCode()
 		}
 	}
+	g.emitDeadVars(2 + g.r.Intn(3))
 	g.w("\treturn acc ^ b\n}\n\n")
 }
 
@@ -830,33 +934,38 @@ func (g *ggen) emitMediumBallast(name string, tables []string, prev []string) {
 		other := prev[g.r.Intn(len(prev))]
 		g.wf("\tacc = %s(acc ^ %s)\n", other, g.u64())
 	}
+	g.emitDeadVars(1 + g.r.Intn(2))
 
 	for i := 0; i < numOps; i++ {
 		switch g.r.Intn(8) {
 		case 0:
-			g.wf("\tacc ^= %s[acc&%d]\n", tbl, m)
+			g.emitComplexOp("acc", fmt.Sprintf("^= %s[acc&%d]", tbl, m))
 		case 1:
-			g.wf("\tacc = acc*%s + %s\n", k2, g.u64())
+			g.emitComplexOp("acc", fmt.Sprintf("= acc*%s + %s", k2, g.u64()))
 		case 2:
-			g.wf("\tacc = (acc<<%d)|(acc>>%d)\n", r1, 64-r1)
+			g.emitComplexOp("acc", fmt.Sprintf("= (acc<<%d)|(acc>>%d)", r1, 64-r1))
 		case 3:
-			g.wf("\tacc += %s[(acc>>8)&%d] ^ %s\n", tbl, m, g.u64())
+			g.emitComplexOp("acc", fmt.Sprintf("+= %s[(acc>>8)&%d] ^ %s", tbl, m, g.u64()))
 		case 4:
 			if len(prev) > 0 {
 				other := prev[g.r.Intn(len(prev))]
-				g.wf("\tacc = %s(acc)\n", other)
+				g.emitComplexOp("acc", fmt.Sprintf("= %s(acc)", other))
 			} else {
-				g.wf("\tacc ^= %s\n", g.u64())
+				g.emitComplexOp("acc", fmt.Sprintf("^= %s", g.u64()))
 			}
 		case 5:
-			g.wf("\tacc ^= %s[acc&%d] ^ %s[(acc>>16)&%d]\n", tbl, m, tbl2, m)
+			g.emitComplexOp("acc", fmt.Sprintf("^= %s[acc&%d] ^ %s[(acc>>16)&%d]", tbl, m, tbl2, m))
 		case 6:
-			g.wf("\tacc = acc*%s ^ (acc>>32)\n", g.ou64())
+			g.emitComplexOp("acc", fmt.Sprintf("= acc*%s ^ (acc>>32)", g.ou64()))
 		case 7:
-			g.wf("\tif %s[acc&%d]|%s[(acc>>16)&%d] != 0 { acc ^= %s }\n",
-				tbl, m, tbl2, m, g.u64())
+			g.emitComplexIf(fmt.Sprintf("%s[acc&%d]|%s[(acc>>16)&%d] != 0", tbl, m, tbl2, m),
+				fmt.Sprintf("acc ^= %s", g.u64()))
+		}
+		if i%5 == 0 {
+			g.emitDeadCode()
 		}
 	}
+	g.emitDeadVars(1 + g.r.Intn(2))
 	g.w("\treturn acc\n}\n\n")
 }
 
@@ -870,26 +979,31 @@ func (g *ggen) emitLightBallast(name string, tables []string, prev []string) {
 
 	g.wf("func %s(x uint64) uint64 {\n", name)
 	g.wf("\tv := x*%s\n", k)
+	g.emitDeadVars(1 + g.r.Intn(2))
 	for i := 0; i < 4+g.r.Intn(6); i++ {
 		switch g.r.Intn(6) {
 		case 0:
-			g.wf("\tv ^= %s[v&%d]\n", tbl, m)
+			g.emitComplexOp("v", fmt.Sprintf("^= %s[v&%d]", tbl, m))
 		case 1:
-			g.wf("\tv = %s(v, %d)\n", rotl, r)
+			g.emitComplexOp("v", fmt.Sprintf("= %s(v, %d)", rotl, r))
 		case 2:
-			g.wf("\tv = %s(v ^ %s)\n", xsh, g.u64())
+			g.emitComplexOp("v", fmt.Sprintf("= %s(v ^ %s)", xsh, g.u64()))
 		case 3:
 			if len(prev) > 0 {
-				g.wf("\tv = %s(v)\n", prev[g.r.Intn(len(prev))])
+				g.emitComplexOp("v", fmt.Sprintf("= %s(v)", prev[g.r.Intn(len(prev))]))
 			} else {
-				g.wf("\tv ^= %s\n", g.u64())
+				g.emitComplexOp("v", fmt.Sprintf("^= %s", g.u64()))
 			}
 		case 4:
-			g.wf("\tv += %s[(v>>8)&%d]\n", tbl, m)
+			g.emitComplexOp("v", fmt.Sprintf("+= %s[(v>>8)&%d]", tbl, m))
 		case 5:
-			g.wf("\tv = (v*%s) ^ (v>>32)\n", g.ou64())
+			g.emitComplexOp("v", fmt.Sprintf("= (v*%s) ^ (v>>32)", g.ou64()))
+		}
+		if i%3 == 0 {
+			g.emitDeadCode()
 		}
 	}
+	g.emitDeadVars(1 + g.r.Intn(2))
 	g.w("\treturn v\n}\n\n")
 }
 
