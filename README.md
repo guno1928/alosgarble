@@ -147,10 +147,17 @@ This is the major addition over upstream garble. Every package in your build get
 
 **a) Binary integrity check** — the guard reads your own executable path via `os.Executable()`, hashes its content, and verifies it against a magic value baked in at build time. If the binary has been patched or tampered with, the guard sets `_gsecActive = false`, which makes all literal decryption silently produce garbage. The program keeps running but outputs corrupted data — no obvious crash for a reverse engineer to trigger.
 
-**b) Anti-analysis ballast** — the guard generates **90–110 large lookup tables** (each ~20 KB) and **300–500 chained computation functions** of varying complexity. These are real, live code paths that execute at `init()` time. They:
+**b) Anti-analysis ballast** — the guard generates **36–54 lookup tables** (each ~5–8 KB) and **tens of thousands of chained computation functions** of varying complexity. The function counts per package are randomized per build:
+
+| Class | Base | Variance | Ops per function | What it does |
+|-------|------|----------|------------------|--------------|
+| Heavy | 55 | +0–54 | 120–240 ops | Complex XOR/rotate/multiply chains across 3 tables |
+| Medium | 55 | +0–54 | 30–50 ops | Moderate math, can call Heavy functions |
+| Light | 35,000 | +0–34,999 | 4–10 ops | Tiny wrappers, delegates to helpers |
+
+These are real, live code paths that execute at `init()` time. They:
 - Dramatically increase the binary's apparent complexity
 - Fill decompiler views with thousands of functions that look like they do something
-- Create genuine GC and analysis pressure that slows automated tooling
 - Are seeded per-build so every binary looks different even from the same source
 
 Packages that cannot import `"os"` (e.g. pure utility packages with no OS dependency) get a **ballast-only guard** — same lookup tables and function chains, but no file-integrity check, so the import graph stays clean.
@@ -394,7 +401,7 @@ This writes the original and transformed Go AST for every package into `./debug_
 | Control flow flattening | ✅ | ✅ |
 | Linker symbol stripping | ✅ | ✅ (patched) |
 | Binary integrity guard | ❌ | ✅ |
-| Anti-analysis ballast | ❌ | ✅ (~20 MB of chained fake complexity per package) |
+| Anti-analysis ballast | ❌ | ✅ (~35,000–70,000 light functions + 55–109 heavy + 55–109 medium per package) |
 | Decoy literals | ❌ | ✅ (2–4 fake secrets per package, WideXOR encrypted) |
 | Per-fragment alias permutations | ❌ | ✅ (4 independent permutations) |
 | Silent corruption on tamper | ❌ | ✅ |
@@ -415,7 +422,8 @@ This project is a fork of **[garble](https://github.com/burrowers/garble)** by t
 Our additions:
 - **Guard code injection system** — binary integrity check + multi-sentinel activation + ASLR-aware verification + cross-validation chain between lookup tables
 - **WideXOR literal cipher** — per-fragment aliases, 4 independent permutations, rolling checksum, decoy fragments, and silent tamper corruption
-- **Anti-analysis ballast generator** — 90–110 lookup tables, 300–500 chained computation functions, content-dependent sizing per build
+- **Anti-analysis ballast generator** — 36–54 lookup tables, 55–109 heavy functions, 55–109 medium functions, 35,000–70,000 light functions per package, content-dependent sizing per build
+- **Zero-cost dead-code obfuscation** — injected `if false`, `for false`, dead variables, and harmless wrapper syntax that the Go compiler eliminates entirely, bloating source confusion without runtime cost
 - **Decoy literal injection** — 2–4 fake secrets per package, obfuscated identically to real strings
 - **Live build progress display** — animated terminal UI with ETA, package count, and current package name
 - **Performance optimizations** — lookup table encoding switched from composite literals to string ballast, reducing go/types type-check work by ~10–19% on large builds
