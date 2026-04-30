@@ -458,7 +458,11 @@ func (g *ggen) emitInitAndRun(tableNames []string, numHeavy int) {
 	g.w("\t\t\tprintln(\"[GARBLE-DEBUG] PANIC in main guard init()\", r)\n")
 	g.w("\t\t}\n")
 	g.w("\t}()\n")
-	g.wf("\tprintln(\"[GARBLE-DEBUG] init() calling run()\"); %s()\n", runName)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] init() calling run()\"); %s()\n", runName)
+	} else {
+		g.wf("\t%s()\n", runName)
+	}
 	g.w("}\n\n")
 	g.wf("func %s() {\n", runName)
 	if flagDebug {
@@ -637,9 +641,13 @@ func (g *ggen) emitInitAndRun(tableNames []string, numHeavy int) {
 		g.w("\tprintln(\"[GARBLE-DEBUG] All ALOS Garble guard checks passed - starting main code\")\n")
 		g.wf("\t%s(\"All ALOS Garble guard checks passed - starting main code\")\n", dbgPrint)
 	}
-	g.w("\tprintln(\"[GARBLE-DEBUG] run() setting _gsecActive\")\n")
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] run() setting _gsecActive\")\n")
+	}
 	g.wf("\t_gsecActive = %s && %s && %s && %s == 3\n", gsecA, gsecB, gsecC, gsecLevel)
-	g.w("\tprintln(\"[GARBLE-DEBUG] run() completed successfully\")\n")
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] run() completed successfully\")\n")
+	}
 	g.w("}\n\n")
 }
 
