@@ -711,60 +711,80 @@ func (g *ggen) emitFail() {
 func (g *ggen) emitExePath() {
 	name := g.id("exePath")
 	g.wf("func %s() (string, bool) {\n", name)
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
+	}
 	g.w("\tp, err := os.Executable()\n")
-	g.w("\tif err != nil { println(\"[GARBLE-DEBUG] exePath: os.Executable failed\"); return \"\", false }\n")
-	g.w("\tif len(p) == 0 || len(p) > 4096 { println(\"[GARBLE-DEBUG] exePath: path length invalid\", len(p)); return \"\", false }\n")
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	g.w("\tif err != nil { return \"\", false }\n")
+	g.w("\tif len(p) == 0 || len(p) > 4096 { return \"\", false }\n")
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	}
 	g.w("\treturn p, true\n}\n\n")
 }
 
 func (g *ggen) emitValidatePath() {
 	name := g.id("validatePath")
 	g.wf("func %s(p string) bool {\n", name)
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER len=\", len(p))\n", name)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER len=\", len(p))\n", name)
+	}
 	g.w("\tn := len(p)\n")
-	g.w("\tif n < 1 || n > 4096 { println(\"[GARBLE-DEBUG] validatePath: length invalid\", n); return false }\n")
-	g.w("\tfor i := 0; i < n; i++ { if p[i] == 0 { println(\"[GARBLE-DEBUG] validatePath: null byte at\", i); return false } }\n")
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	g.w("\tif n < 1 || n > 4096 { return false }\n")
+	g.w("\tfor i := 0; i < n; i++ { if p[i] == 0 { return false } }\n")
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	}
 	g.w("\treturn true\n}\n\n")
 }
 
 func (g *ggen) emitOpenExe() {
 	name := g.id("openExe")
 	g.wf("func %s(p string) (*os.File, bool) {\n", name)
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
-	g.w("\tif len(p) == 0 { println(\"[GARBLE-DEBUG] openExe: empty path\"); return nil, false }\n")
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
+	}
+	g.w("\tif len(p) == 0 { return nil, false }\n")
 	g.w("\tf, err := os.Open(p)\n")
-	g.w("\tif err != nil || f == nil { println(\"[GARBLE-DEBUG] openExe: os.Open failed\", err); return nil, false }\n")
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	g.w("\tif err != nil || f == nil { return nil, false }\n")
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	}
 	g.w("\treturn f, true\n}\n\n")
 }
 
 func (g *ggen) emitGetSize() {
 	name := g.id("getSize")
 	g.wf("func %s(f *os.File) (int64, bool) {\n", name)
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
-	g.w("\tif f == nil { println(\"[GARBLE-DEBUG] getSize: nil file\"); return 0, false }\n")
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
+	}
+	g.w("\tif f == nil { return 0, false }\n")
 	g.w("\tinfo, err := f.Stat()\n")
-	g.w("\tif err != nil { println(\"[GARBLE-DEBUG] getSize: Stat failed\", err); return 0, false }\n")
+	g.w("\tif err != nil { return 0, false }\n")
 	g.w("\tsz := info.Size()\n")
-	g.w("\tif sz < 112 || sz > 1<<30 { println(\"[GARBLE-DEBUG] getSize: size out of range\", sz); return 0, false }\n")
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok size=\", sz)\n", name)
+	g.w("\tif sz < 112 || sz > 1<<30 { return 0, false }\n")
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok size=\", sz)\n", name)
+	}
 	g.w("\treturn sz, true\n}\n\n")
 }
 
 func (g *ggen) emitReadTrailer() {
 	name := g.id("readTrailer")
 	g.wf("func %s(f *os.File, size int64) ([48]byte, bool) {\n", name)
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER size=\", size)\n", name)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER size=\", size)\n", name)
+	}
 	g.w("\tvar t [48]byte\n")
-	g.w("\tif f == nil { println(\"[GARBLE-DEBUG] readTrailer: nil file\"); return t, false }\n")
+	g.w("\tif f == nil { return t, false }\n")
 	g.w("\toff := size - 48\n")
-	g.w("\tif off < 0 { println(\"[GARBLE-DEBUG] readTrailer: size < 48\", size); return t, false }\n")
+	g.w("\tif off < 0 { return t, false }\n")
 	g.w("\tn, err := f.ReadAt(t[:], off)\n")
-	g.w("\tif err != nil || n != 48 { println(\"[GARBLE-DEBUG] readTrailer: ReadAt failed\", err, n); return t, false }\n")
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	g.w("\tif err != nil || n != 48 { return t, false }\n")
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	}
 	g.w("\treturn t, true\n}\n\n")
 }
 
@@ -778,11 +798,15 @@ func (g *ggen) emitMagicCheck() {
 	magicName := g.id("magic")
 
 	g.wf("func %s(t [48]byte) bool {\n", master)
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", master)
-	for _, c := range checkers {
-		g.wf("\tif !%s(t) { println(\"[GARBLE-DEBUG] magicOk: checker failed\"); return false }\n", c)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", master)
 	}
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", master)
+	for _, c := range checkers {
+		g.wf("\tif !%s(t) { return false }\n", c)
+	}
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", master)
+	}
 	g.w("\treturn true\n}\n\n")
 
 	for i, c := range checkers {
@@ -821,8 +845,8 @@ func (g *ggen) emitSizeCheck() {
 
 	g.wf("func %s(t [48]byte, actual int64) bool {\n", sizeOk)
 	g.wf("\texpected := %s(t)\n", extract)
-	g.w("\tif expected == 0 || expected > 1<<30 { println(\"[GARBLE-DEBUG] sizeOk: expected out of range\", expected); return false }\n")
-	g.w("\tif int64(expected) != actual { println(\"[GARBLE-DEBUG] sizeOk: mismatch expected\", expected, \"actual\", actual); return false }\n")
+	g.w("\tif expected == 0 || expected > 1<<30 { return false }\n")
+	g.w("\tif int64(expected) != actual { return false }\n")
 	g.w("\treturn true\n}\n\n")
 }
 
@@ -861,14 +885,16 @@ func (g *ggen) emitHashBody() {
 	shaH0 := g.id("shaH0")
 
 	g.wf("func %s(f *os.File, size int64) ([32]byte, bool) {\n", name)
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER size=\", size)\n", name)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER size=\", size)\n", name)
+	}
 	g.w("\tvar zero [32]byte\n")
-	g.w("\tif f == nil || size < 48 { println(\"[GARBLE-DEBUG] hashBody: nil file or size < 48\", size); return zero, false }\n")
+	g.w("\tif f == nil || size < 48 { return zero, false }\n")
 	g.w("\tbodyLen := size - 48\n")
-	g.w("\tif bodyLen < 0 || bodyLen > 1<<30 { println(\"[GARBLE-DEBUG] hashBody: bodyLen invalid\", bodyLen); return zero, false }\n")
+	g.w("\tif bodyLen < 0 || bodyLen > 1<<30 { return zero, false }\n")
 	g.w("\tdata := make([]byte, bodyLen)\n")
 	g.w("\tn, _ := f.ReadAt(data, 0)\n")
-	g.w("\tif int64(n) != bodyLen { println(\"[GARBLE-DEBUG] hashBody: read mismatch\", n, bodyLen); return zero, false }\n")
+	g.w("\tif int64(n) != bodyLen { return zero, false }\n")
 	g.wf("\tstate := %s\n", shaH0)
 	g.w("\tvar block [64]byte\n\tvar pending [64]byte\n\tvar pendingN int\n")
 	g.w("\tremaining := data\n")
@@ -894,7 +920,9 @@ func (g *ggen) emitHashBody() {
 	g.w("\t}\n")
 	g.w("\tvar out [32]byte\n")
 	g.w("\tfor i:=0; i<8; i++ { j:=i*4; out[j]=byte(state[i]>>24);out[j+1]=byte(state[i]>>16);out[j+2]=byte(state[i]>>8);out[j+3]=byte(state[i]) }\n")
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
+	}
 	g.w("\treturn out, true\n}\n\n")
 }
 
@@ -905,11 +933,15 @@ func (g *ggen) emitCmpHash() {
 		checkers[i] = g.fresh()
 	}
 	g.wf("func %s(got [32]byte, t [48]byte) bool {\n", master)
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", master)
-	for _, c := range checkers {
-		g.wf("\tif !%s(got, t) { println(\"[GARBLE-DEBUG] cmpHash: checker failed\"); return false }\n", c)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", master)
 	}
-	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", master)
+	for _, c := range checkers {
+		g.wf("\tif !%s(got, t) { return false }\n", c)
+	}
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", master)
+	}
 	g.w("\treturn true\n}\n\n")
 	for i, c := range checkers {
 		lo := i * 8
