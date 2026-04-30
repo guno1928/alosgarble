@@ -6,9 +6,7 @@
 package main
 
 import (
-	"flag"
 	"fmt"
-	"strings"
 	"unicode"
 )
 
@@ -104,26 +102,3 @@ func cmdgoQuotedJoin(args []string) (string, error) {
 
 
 
-type cmdgoQuotedFlag []string
-
-var _ flag.Value = (*cmdgoQuotedFlag)(nil)
-
-func (f *cmdgoQuotedFlag) Set(v string) error {
-	fs, err := cmdgoQuotedSplit(v)
-	if err != nil {
-		return err
-	}
-	*f = fs[:len(fs):len(fs)]
-	return nil
-}
-
-func (f *cmdgoQuotedFlag) String() string {
-	if f == nil {
-		return ""
-	}
-	s, err := cmdgoQuotedJoin(*f)
-	if err != nil {
-		return strings.Join(*f, " ")
-	}
-	return s
-}

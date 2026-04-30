@@ -13,7 +13,7 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-const MinSize = 8
+const MinSize = 4
 
 const MaxSize = 2 << 10
 
@@ -260,10 +260,6 @@ func obfuscateString(or *obfRand, data string) *ast.CallExpr {
 			),
 		),
 	}
-	if GuardBoolName != "" && or.funcDepth > 0 && or.initDepth == 0 {
-
-		block.List = append(block.List, guardActiveCheck(GuardBoolName))
-	}
 	block.List = append(block.List, ah.ReturnStmt(ah.CallExpr(or.proxyDispatcher.HideValue(funcVal, funcTyp), ast.NewIdent("data"))))
 	return ah.LambdaCall(params, ast.NewIdent("string"), block, args)
 }
@@ -276,18 +272,12 @@ func obfuscateByteSlice(or *obfRand, isPointer bool, data []byte) *ast.CallExpr 
 	params, args := extKeysToParams(or, extKeys)
 
 	if isPointer {
-		if GuardBoolName != "" && or.funcDepth > 0 && or.initDepth == 0 {
-			block.List = append(block.List, guardActiveCheck(GuardBoolName))
-		}
 		block.List = append(block.List, ah.ReturnStmt(
 			ah.UnaryExpr(token.AND, ast.NewIdent("data")),
 		))
 		return ah.LambdaCall(params, ah.StarExpr(ah.ByteSliceType()), block, args)
 	}
 
-	if GuardBoolName != "" && or.funcDepth > 0 && or.initDepth == 0 {
-		block.List = append(block.List, guardActiveCheck(GuardBoolName))
-	}
 	block.List = append(block.List, ah.ReturnStmt(ast.NewIdent("data")))
 	return ah.LambdaCall(params, ah.ByteSliceType(), block, args)
 }
@@ -331,14 +321,8 @@ func obfuscateByteArray(or *obfRand, isPointer bool, data []byte, length int64) 
 
 	retStmt := ah.ReturnStmt(retexpr)
 
-	if GuardBoolName != "" && or.funcDepth > 0 && or.initDepth == 0 {
-		block.List = append(block.List, sliceToArray...)
-		block.List = append(block.List, guardActiveCheck(GuardBoolName))
-		block.List = append(block.List, retStmt)
-	} else {
-		block.List = append(block.List, sliceToArray...)
-		block.List = append(block.List, retStmt)
-	}
+	block.List = append(block.List, sliceToArray...)
+	block.List = append(block.List, retStmt)
 
 	if isPointer {
 		return ah.LambdaCall(params, ah.StarExpr(arrayType), block, args)
@@ -357,31 +341,22 @@ func (or *obfRand) pickObfuscator(size int) obfuscator {
 	return CheapObfuscators[or.rnd.Intn(len(CheapObfuscators))]
 }
 
-func guardActiveCheck(boolName string) ast.Stmt {
-
-	corruptLoop := &ast.RangeStmt{
-		Key: ast.NewIdent("_gi"),
-		Tok: token.DEFINE,
-		X:   ast.NewIdent("data"),
-		Body: ah.BlockStmt(
-			&ast.AssignStmt{
-				Lhs: []ast.Expr{
-					&ast.IndexExpr{
-						X:     ast.NewIdent("data"),
-						Index: ast.NewIdent("_gi"),
-					},
-				},
-				Tok: token.XOR_ASSIGN,
-				Rhs: []ast.Expr{ah.IntLit(0xFF)},
-			},
-		),
-	}
-
+func FunctionGuardCheck(boolName string) ast.Stmt {
 	return &ast.IfStmt{
 		Cond: &ast.UnaryExpr{
 			Op: token.NOT,
 			X:  ast.NewIdent(boolName),
 		},
-		Body: ah.BlockStmt(corruptLoop),
+		Body: ah.BlockStmt(
+			&ast.ExprStmt{
+				X: &ast.CallExpr{
+					Fun: ast.NewIdent("panic"),
+					Args: []ast.Expr{&ast.BasicLit{
+						Kind:  token.STRING,
+						Value: `"garble guard failure"`,
+					}},
+				},
+			},
+		),
 	}
 }

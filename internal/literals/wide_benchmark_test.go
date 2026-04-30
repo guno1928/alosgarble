@@ -14,11 +14,6 @@ import (
 	"time"
 )
 
-// ============================================================================
-// BENCHMARK 1: Literal Decryption Throughput (simulates what generated code does)
-// ============================================================================
-
-// wideDecrypt simulates the exact operations the wide obfuscator generates
 func wideDecrypt(enc, key []byte) []byte {
 	data := make([]byte, len(enc))
 	for i := 0; i < len(enc); i++ {
@@ -27,7 +22,6 @@ func wideDecrypt(enc, key []byte) []byte {
 	return data
 }
 
-// wideDecryptWithChecksum simulates the full wide obfuscator runtime path
 func wideDecryptFull(enc []byte, keyFragments [][]byte, offsets []int, storedCheck uint64, checkSeed uint64, tamperByte byte) []byte {
 	n := len(enc)
 	key := make([]byte, n)
@@ -35,16 +29,13 @@ func wideDecryptFull(enc []byte, keyFragments [][]byte, offsets []int, storedChe
 		copy(key[offsets[fi]:], frag)
 	}
 
-	var check uint64 = checkSeed
 	data := make([]byte, n)
 	for i := 0; i < n; i++ {
-		pv := enc[i] ^ key[i]
-		data[i] = pv
-		check ^= uint64(pv) << uint((i*8)&63)
+		data[i] = enc[i] ^ key[i]
 	}
 
 	compConst := storedCheck ^ checkSeed
-	if check != compConst {
+	if wideChecksum(data) != compConst {
 		for j := range data {
 			data[j] ^= tamperByte
 		}
@@ -145,10 +136,6 @@ func BenchmarkLiteralDecryptFullLarge(b *testing.B) {
 	}
 }
 
-// ============================================================================
-// BENCHMARK 2: Obfuscator Generation Speed
-// ============================================================================
-
 func BenchmarkWideObfuscateSmall(b *testing.B) {
 	rnd := rand.New(rand.NewSource(42))
 	data := []byte("hello world test string literal here")
@@ -184,16 +171,11 @@ func BenchmarkWideObfuscateLarge(b *testing.B) {
 	}
 }
 
-// ============================================================================
-// BENCHMARK 3: End-to-end Compile + Run with Obfuscated Literals
-// ============================================================================
-
 func BenchmarkE2EObfuscatedLiteralAccess(b *testing.B) {
 	if testing.Short() {
 		b.Skip("skipping e2e benchmark in short mode")
 	}
 
-	// Generate a program with many obfuscated string literals
 	var src strings.Builder
 	src.WriteString("package main\n\nimport \"fmt\"\n\nfunc main() {\n")
 	for i := 0; i < 100; i++ {
@@ -206,7 +188,6 @@ func BenchmarkE2EObfuscatedLiteralAccess(b *testing.B) {
 	os.WriteFile(mainFile, []byte(src.String()), 0644)
 	os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\ngo 1.21\n"), 0644)
 
-	// Build with garble
 	garblePath, _ := filepath.Abs("../../garble.exe")
 	cmd := exec.Command(garblePath, "build", "-o", "test.exe")
 	cmd.Dir = tmpDir
@@ -230,10 +211,6 @@ func BenchmarkE2EObfuscatedLiteralAccess(b *testing.B) {
 	}
 }
 
-// ============================================================================
-// BENCHMARK 4: Compare Plain vs Obfuscated String Access Pattern
-// ============================================================================
-
 func BenchmarkPlainStringAccess(b *testing.B) {
 	strings := make([]string, 100)
 	for i := range strings {
@@ -249,7 +226,6 @@ func BenchmarkPlainStringAccess(b *testing.B) {
 }
 
 func BenchmarkSimulatedObfuscatedAccess(b *testing.B) {
-	// Simulates what happens when each string access triggers decryption
 	encStrings := make([][]byte, 100)
 	keys := make([][]byte, 100)
 	for i := range encStrings {
@@ -274,10 +250,6 @@ func BenchmarkSimulatedObfuscatedAccess(b *testing.B) {
 	}
 }
 
-// ============================================================================
-// TEST: Measure Obfuscated Binary Size vs Plain
-// ============================================================================
-
 func TestObfuscatedBinarySizeImpact(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping binary size test in short mode")
@@ -288,7 +260,6 @@ func TestObfuscatedBinarySizeImpact(t *testing.T) {
 		t.Run(fmt.Sprintf("literals_%d", count), func(t *testing.T) {
 			tmpDir := t.TempDir()
 
-			// Build plain version
 			var plainSrc strings.Builder
 			plainSrc.WriteString("package main\n\nimport \"fmt\"\n\nfunc main() {\n")
 			for i := 0; i < count; i++ {
@@ -308,7 +279,6 @@ func TestObfuscatedBinarySizeImpact(t *testing.T) {
 
 			plainInfo, _ := os.Stat(filepath.Join(tmpDir, "plain.exe"))
 
-			// Build obfuscated version with garble
 			garblePath, _ := filepath.Abs("../../garble.exe")
 			cmd = exec.Command(garblePath, "build", "-o", "obf.exe", "plain.go")
 			cmd.Dir = tmpDir
@@ -330,10 +300,6 @@ func TestObfuscatedBinarySizeImpact(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// BENCHMARK 5: Fragment Assembly Cost
-// ============================================================================
-
 func BenchmarkFragmentAssembly(b *testing.B) {
 	key := make([]byte, 256)
 	rand.Read(key)
@@ -354,7 +320,6 @@ func BenchmarkFragmentAssembly(b *testing.B) {
 func BenchmarkFragmentAssemblyMany(b *testing.B) {
 	key := make([]byte, 256)
 	rand.Read(key)
-	// 6 fragments
 	fragments := make([][]byte, 6)
 	offsets := make([]int, 6)
 	for i := 0; i < 6; i++ {
@@ -372,10 +337,6 @@ func BenchmarkFragmentAssemblyMany(b *testing.B) {
 		_ = assembled
 	}
 }
-
-// ============================================================================
-// BENCHMARK 6: XOR Decryption Hot Path (what actually matters)
-// ============================================================================
 
 func BenchmarkXORLoopUnrolled(b *testing.B) {
 	enc := make([]byte, 64)
@@ -434,10 +395,6 @@ func BenchmarkXORLoopNoAlloc(b *testing.B) {
 	}
 }
 
-// ============================================================================
-// BENCHMARK 7: AST Generation Overhead (compile-time cost)
-// ============================================================================
-
 func BenchmarkASTGenerationSmallLiteral(b *testing.B) {
 	rnd := rand.New(rand.NewSource(42))
 	data := []byte("small string test here")
@@ -463,10 +420,6 @@ func BenchmarkASTGenerationLargeLiteral(b *testing.B) {
 	}
 }
 
-// ============================================================================
-// TEST: Print Environment Info
-// ============================================================================
-
 func TestBenchmarkHeader(t *testing.T) {
 	t.Log("========================================================================")
 	t.Log("WIDE LITERAL OBFUSCATOR PERFORMANCE BENCHMARK SUITE")
@@ -478,12 +431,7 @@ func TestBenchmarkHeader(t *testing.T) {
 	t.Log("========================================================================")
 }
 
-// ============================================================================
-// BENCHMARK 8: Multiple Literal Access Pattern (simulates real program)
-// ============================================================================
-
 func BenchmarkManyLiteralsAccess(b *testing.B) {
-	// Simulate a program with 50 string literals being accessed once each
 	const numLiterals = 50
 	const literalSize = 64
 
@@ -512,10 +460,6 @@ func BenchmarkManyLiteralsAccess(b *testing.B) {
 	}
 }
 
-// ============================================================================
-// BENCHMARK 9: String Literal Size Scaling
-// ============================================================================
-
 func BenchmarkLiteralSize8(b *testing.B)   { benchmarkLiteralSize(b, 8) }
 func BenchmarkLiteralSize16(b *testing.B)  { benchmarkLiteralSize(b, 16) }
 func BenchmarkLiteralSize32(b *testing.B)  { benchmarkLiteralSize(b, 32) }
@@ -541,10 +485,6 @@ func benchmarkLiteralSize(b *testing.B, size int) {
 	}
 }
 
-// ============================================================================
-// BENCHMARK 10: Source code size generated by obfuscator
-// ============================================================================
-
 func BenchmarkGeneratedSourceSize(b *testing.B) {
 	sizes := []int{16, 64, 128, 256, 512, 1024}
 	for _, sz := range sizes {
@@ -563,10 +503,6 @@ func BenchmarkGeneratedSourceSize(b *testing.B) {
 	}
 }
 
-// ============================================================================
-// Helper to count generated source lines
-// ============================================================================
-
 func TestGeneratedSourceLineCounts(t *testing.T) {
 	sizes := []int{16, 32, 64, 128, 256}
 	for _, sz := range sizes {
@@ -577,7 +513,6 @@ func TestGeneratedSourceLineCounts(t *testing.T) {
 		w := wide{}
 		block := w.obfuscate(rnd, data, extKeys)
 
-		// Convert AST back to source to count lines
 		fset := token.NewFileSet()
 		file := &ast.File{
 			Name:  ast.NewIdent("test"),
@@ -589,7 +524,6 @@ func TestGeneratedSourceLineCounts(t *testing.T) {
 		}
 
 		var buf strings.Builder
-		// Use go/format to print the AST
 		t.Logf("literal_size=%d generated_ast_stmts=%d", sz, len(block.List))
 		_ = fset
 		_ = file

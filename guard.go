@@ -65,6 +65,9 @@ func generateGuardSourceBallastOnly(rnd *mathrand.Rand, pkgName string, scale fl
 
 func (g *ggen) emitBallastOnly(pkgName string, scale float64) {
 	g.wf("package %s\n\n", pkgName)
+	if flagDebug {
+		g.wf("var _guardDbgInit = func() int { println(\"[GARBLE-DEBUG] package-level init for ballast guard in pkg\", \"%s\"); return 0 }()\n", pkgName)
+	}
 	numTables := scaleInt(ballastTables+g.r.Intn(ballastTablesVar), scale)
 	tableSize := scaleInt(ballastTableSize+g.r.Intn(ballastTableSizeVar), scale)
 	numHeavy := scaleInt(ballastHeavy+g.r.Intn(ballastHeavyVar), scale)
@@ -72,7 +75,7 @@ func (g *ggen) emitBallastOnly(pkgName string, scale float64) {
 	numLight := scaleInt(ballastLight+g.r.Intn(ballastLightVar), scale)
 	tableNames := g.emitLookupTables(numTables, tableSize)
 	g.emitGlobalsBallastOnly()
-	g.emitBallastOnlyInit(tableNames, numHeavy)
+	g.emitBallastOnlyInit(pkgName, tableNames, numHeavy)
 	g.emitPrimitives()
 	ballastNames := g.emitBallastFunctions(tableNames, numHeavy, numMedium, numLight)
 	g.emitBallastChain(ballastNames)
@@ -90,7 +93,7 @@ func (g *ggen) emitGlobalsBallastOnly() {
 	g.nl()
 }
 
-func (g *ggen) emitBallastOnlyInit(tableNames []string, numHeavy int) {
+func (g *ggen) emitBallastOnlyInit(pkgName string, tableNames []string, numHeavy int) {
 	h := tableNames[0]
 	chainName := g.id("chain")
 	gsecA := g.id("gsecA")
@@ -98,14 +101,30 @@ func (g *ggen) emitBallastOnlyInit(tableNames []string, numHeavy int) {
 	gsecC := g.id("gsecC")
 	gsecLevel := g.id("gsecLevel")
 	g.w("func init() {\n")
+	g.w("\tdefer func() {\n")
+	g.w("\t\tif r := recover(); r != nil {\n")
+	g.w("\t\t\tprintln(\"[GARBLE-DEBUG] PANIC in sub-package guard init()\", r)\n")
+	g.w("\t\t}\n")
+	g.w("\t}()\n")
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] [pkg=\", \"%s\", \"] ALOS Garble sub-package guard starting in debug mode\")\n", pkgName)
+		g.wf("\tprintln(\"[GARBLE-DEBUG] [pkg=\", \"%s\", \"] About to run ballast chain\")\n", pkgName)
+	}
 	g.wf("\t_ = %s[uint(%s[0])%%uint(%d)](uint64(%s[1]))\n", chainName, h, numHeavy, h)
 	for _, bv := range g.ballastVars {
 		g.wf("\t_ = %s[0]\n", bv)
+	}
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] [pkg=\", \"%s\", \"] Ballast chain completed\")\n", pkgName)
 	}
 	g.wf("\t%s = true\n", gsecA)
 	g.wf("\t%s = true\n", gsecB)
 	g.wf("\t%s = true\n", gsecC)
 	g.wf("\t%s = 3\n", gsecLevel)
+	if flagDebug {
+		g.wf("\tprintln(\"[GARBLE-DEBUG] [pkg=\", \"%s\", \"] Sub-package ballast checks passed\")\n", pkgName)
+		g.wf("\tprintln(\"[GARBLE-DEBUG] [pkg=\", \"%s\", \"] Setting _gsecActive = true\")\n", pkgName)
+	}
 	g.wf("\t_gsecActive = %s && %s && %s && %s == 3\n}\n\n", gsecA, gsecB, gsecC, gsecLevel)
 }
 
@@ -185,6 +204,7 @@ func (g *ggen) emitWithParams(pkgName string, numTables, tableSize, numHeavy, nu
 	g.emitFail()
 	if flagDebug {
 		g.emitDbgWrite()
+		g.emitDbgPrint()
 	}
 	g.emitExePath()
 	g.emitValidatePath()
@@ -204,6 +224,14 @@ func (g *ggen) emitWithParams(pkgName string, numTables, tableSize, numHeavy, nu
 func (g *ggen) emitHeader(pkgName string) {
 	if flagDebug {
 		g.wf("package %s\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\t\"runtime\"\n\t\"unsafe\"\n)\n\n", pkgName)
+		g.w("var _guardDbgInit = func() int { println(\"[GARBLE-DEBUG] package-level init for guard in main pkg\"); return 0 }()\n")
+		g.w("func _guardOsExit(code int) {\n")
+		g.w("\tprintln(\"[GARBLE-DEBUG] ====== os.Exit INTERCEPTED code=\", code, \"======\")\n")
+		g.w("\tvar _b [4096]byte\n")
+		g.w("\t_n := runtime.Stack(_b[:], false)\n")
+		g.w("\tfmt.Fprintf(os.Stderr, \"[GARBLE-DEBUG] os.Exit stack: %s\\n\", string(_b[:_n]))\n")
+		g.w("\tos.Exit(code)\n")
+		g.w("}\n")
 	} else {
 		g.wf("package %s\n\nimport (\n\t\"os\"\n\t\"unsafe\"\n)\n\n", pkgName)
 	}
@@ -313,6 +341,16 @@ func (g *ggen) emitDbgWrite() {
 	g.w("}\n\n")
 }
 
+func (g *ggen) emitDbgPrint() {
+	if !flagDebug {
+		return
+	}
+	name := g.id("dbgPrint")
+	g.wf("func %s(format string, args ...any) {\n", name)
+	g.w("\tfmt.Fprintf(os.Stderr, \"[GARBLE-DEBUG] \"+format+\"\\n\", args...)\n")
+	g.w("}\n\n")
+}
+
 func (g *ggen) emitLookupTables(count, size int) []string {
 	if g.lookupSize == 0 {
 		lookupBits := 7 + g.r.Intn(2)
@@ -409,9 +447,24 @@ func (g *ggen) emitInitAndRun(tableNames []string, numHeavy int) {
 	gsecB := g.id("gsecB")
 	gsecC := g.id("gsecC")
 	gsecLevel := g.id("gsecLevel")
+	dbgPrint := ""
+	if flagDebug {
+		dbgPrint = g.id("dbgPrint")
+	}
 
-	g.wf("func init() { %s() }\n\n", runName)
+	g.w("func init() {\n")
+	g.w("\tdefer func() {\n")
+	g.w("\t\tif r := recover(); r != nil {\n")
+	g.w("\t\t\tprintln(\"[GARBLE-DEBUG] PANIC in main guard init()\", r)\n")
+	g.w("\t\t}\n")
+	g.w("\t}()\n")
+	g.wf("\tprintln(\"[GARBLE-DEBUG] init() calling run()\"); %s()\n", runName)
+	g.w("}\n\n")
 	g.wf("func %s() {\n", runName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] ALOS Garble guard starting in debug mode\")\n")
+		g.wf("\t%s(\"ALOS Garble guard starting in debug mode\")\n", dbgPrint)
+	}
 
 	pv := g.fresh()
 	g.wf("\t%s := uint64(%s)\n", pv, g.u64())
@@ -424,40 +477,110 @@ func (g *ggen) emitInitAndRun(tableNames []string, numHeavy int) {
 	}
 	g.wf("\t_ = %s\n", pv)
 
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: executable path\")\n")
+		g.wf("\t%s(\"Starting check: executable path\")\n", dbgPrint)
+	}
 	ep, ok1 := g.fresh(), g.fresh()
 	g.wf("\t%s, %s := %s()\n", ep, ok1, exePathName)
-	g.wf("\tif !%s { %s(1); return }\n", ok1, failName)
-	g.wf("\tif !%s(%s) { %s(2); return }\n", validatePath, ep, failName)
+	g.wf("\tif !%s { println(\"[GARBLE-DEBUG] FAIL: executable path (code 1)\"); %s(1); return }\n", ok1, failName)
+	g.wf("\tif !%s(%s) { println(\"[GARBLE-DEBUG] FAIL: validate path (code 2)\"); %s(2); return }\n", validatePath, ep, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: executable path\")\n")
+		g.wf("\t%s(\"Check passed: executable path\")\n", dbgPrint)
+	}
 
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: open executable\")\n")
+		g.wf("\t%s(\"Starting check: open executable\")\n", dbgPrint)
+	}
 	fp, ok2 := g.fresh(), g.fresh()
 	g.wf("\t%s, %s := %s(%s)\n", fp, ok2, openExeName, ep)
-	g.wf("\tif !%s { %s(3); return }\n", ok2, failName)
+	g.wf("\tif !%s { println(\"[GARBLE-DEBUG] FAIL: open executable (code 3)\"); %s(3); return }\n", ok2, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: open executable\")\n")
+		g.wf("\t%s(\"Check passed: open executable\")\n", dbgPrint)
+	}
 
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: file size\")\n")
+		g.wf("\t%s(\"Starting check: file size\")\n", dbgPrint)
+	}
 	sz, ok3 := g.fresh(), g.fresh()
 	g.wf("\t%s, %s := %s(%s)\n", sz, ok3, getSizeName, fp)
-	g.wf("\tif !%s { %s.Close(); %s(4); return }\n", ok3, fp, failName)
+	g.wf("\tif !%s { println(\"[GARBLE-DEBUG] FAIL: file size (code 4)\"); %s.Close(); %s(4); return }\n", ok3, fp, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: file size\")\n")
+		g.wf("\t%s(\"Check passed: file size\")\n", dbgPrint)
+	}
 
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: read trailer\")\n")
+		g.wf("\t%s(\"Starting check: read trailer\")\n", dbgPrint)
+	}
 	tr, ok4 := g.fresh(), g.fresh()
 	g.wf("\t%s, %s := %s(%s, %s)\n", tr, ok4, readTrailerName, fp, sz)
-	g.wf("\tif !%s { %s.Close(); %s(5); return }\n", ok4, fp, failName)
+	g.wf("\tif !%s { println(\"[GARBLE-DEBUG] FAIL: read trailer (code 5)\"); %s.Close(); %s(5); return }\n", ok4, fp, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: read trailer\")\n")
+		g.wf("\t%s(\"Check passed: read trailer\")\n", dbgPrint)
+	}
 
-	g.wf("\tif !%s(%s) { %s.Close(); %s(6); return }\n", magicOkName, tr, fp, failName)
-	g.wf("\tif !%s(%s, %s) { %s.Close(); %s(7); return }\n", sizeOkName, tr, sz, fp, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: magic bytes\")\n")
+		g.wf("\t%s(\"Starting check: magic bytes\")\n", dbgPrint)
+	}
+	g.wf("\tif !%s(%s) { println(\"[GARBLE-DEBUG] FAIL: magic bytes (code 6)\"); %s.Close(); %s(6); return }\n", magicOkName, tr, fp, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: magic bytes\")\n")
+		g.wf("\t%s(\"Check passed: magic bytes\")\n", dbgPrint)
+	}
 
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: size validation\")\n")
+		g.wf("\t%s(\"Starting check: size validation\")\n", dbgPrint)
+	}
+	g.wf("\tif !%s(%s, %s) { println(\"[GARBLE-DEBUG] FAIL: size validation (code 7)\"); %s.Close(); %s(7); return }\n", sizeOkName, tr, sz, fp, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: size validation\")\n")
+		g.wf("\t%s(\"Check passed: size validation\")\n", dbgPrint)
+	}
+
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: hash body\")\n")
+		g.wf("\t%s(\"Starting check: hash body\")\n", dbgPrint)
+	}
 	h, ok5 := g.fresh(), g.fresh()
 	g.wf("\t%s, %s := %s(%s, %s)\n", h, ok5, hashBodyName, fp, sz)
 	g.wf("\t%s.Close()\n", fp)
-	g.wf("\tif !%s { %s(8); return }\n", ok5, failName)
-	g.wf("\tif !%s(%s, %s) { %s(9); return }\n", cmpHashName, h, tr, failName)
+	g.wf("\tif !%s { println(\"[GARBLE-DEBUG] FAIL: hash body (code 8)\"); %s(8); return }\n", ok5, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: hash body\")\n")
+		g.wf("\t%s(\"Check passed: hash body\")\n", dbgPrint)
+	}
+
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: compare hash\")\n")
+		g.wf("\t%s(\"Starting check: compare hash\")\n", dbgPrint)
+	}
+	g.wf("\tif !%s(%s, %s) { println(\"[GARBLE-DEBUG] FAIL: compare hash (code 9)\"); %s(9); return }\n", cmpHashName, h, tr, failName)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: compare hash\")\n")
+		g.wf("\t%s(\"Check passed: compare hash\")\n", dbgPrint)
+	}
 
 	g.wf("\t%s = true\n", gsecA)
 	g.wf("\t%s++\n", gsecLevel)
 
-	numCV := 8 + g.r.Intn(8) // 8–15 cross-checks
+	numCV := 8 + g.r.Intn(8)
 	if numCV > len(g.tableFL)-1 {
 		numCV = len(g.tableFL) - 1
 	}
 	if numCV > 0 {
+		if flagDebug {
+			g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: table cross-checks\")\n")
+			g.wf("\t%s(\"Starting check: table cross-checks\")\n", dbgPrint)
+		}
 		perm := g.r.Perm(len(g.tableFL) - 1)
 		for i := 0; i < numCV; i++ {
 			idx := perm[i]
@@ -465,21 +588,41 @@ func (g *ggen) emitInitAndRun(tableNames []string, numHeavy int) {
 			fl1 := g.tableFL[idx+1]
 			rot := 1 + g.r.Intn(62)
 			expected := bits.RotateLeft64(fl0.last, rot) ^ fl1.first
-			g.wf("\t{ _cv := (%s[%d]<<%d)|(%s[%d]>>%d); if _cv^%s[0] != 0x%016X { %s(1%d); return } }\n",
+			g.wf("\t{ _cv := (%s[%d]<<%d)|(%s[%d]>>%d); if _cv^%s[0] != 0x%016X { println(\"[GARBLE-DEBUG] FAIL: table cross-check %d\"); %s(1%d); return } }\n",
 				fl0.name, g.lookupSize-1, rot,
 				fl0.name, g.lookupSize-1, 64-rot,
 				fl1.name, expected,
-				failName, i)
+				i, failName, i)
+		}
+		if flagDebug {
+			g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: table cross-checks\")\n")
+			g.wf("\t%s(\"Check passed: table cross-checks\")\n", dbgPrint)
 		}
 	}
 
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: extra param ballast\")\n")
+		g.wf("\t%s(\"Starting check: extra param ballast\")\n", dbgPrint)
+	}
 	for i, epName := range g.extraParamNames {
 		tbl := tableNames[g.r.Intn(len(tableNames))]
 		g.wf("\t{ _ep%d := %s(uint64(%s[%d&%d]), %s, %s); _ = _ep%d }\n",
 			i, epName, tbl, i, g.lookupMask, g.u64(), g.u64(), i)
 	}
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: extra param ballast\")\n")
+		g.wf("\t%s(\"Check passed: extra param ballast\")\n", dbgPrint)
+	}
 
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Starting check: ballast chain\")\n")
+		g.wf("\t%s(\"Starting check: ballast chain\")\n", dbgPrint)
+	}
 	g.wf("\t_ = %s[uint(%s[31])%%uint(%d)](uint64(%s))\n", chainName, h, numHeavy, sz)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] Check passed: ballast chain\")\n")
+		g.wf("\t%s(\"Check passed: ballast chain\")\n", dbgPrint)
+	}
 
 	g.wf("\t%s = true\n", gsecB)
 	g.wf("\t%s++\n", gsecLevel)
@@ -490,8 +633,14 @@ func (g *ggen) emitInitAndRun(tableNames []string, numHeavy int) {
 
 	g.wf("\t%s = true\n", gsecC)
 	g.wf("\t%s++\n", gsecLevel)
-	g.wf("\t_gsecActive = %s && %s && %s && %s == 3\n}\n\n",
-		gsecA, gsecB, gsecC, gsecLevel)
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] All ALOS Garble guard checks passed - starting main code\")\n")
+		g.wf("\t%s(\"All ALOS Garble guard checks passed - starting main code\")\n", dbgPrint)
+	}
+	g.w("\tprintln(\"[GARBLE-DEBUG] run() setting _gsecActive\")\n")
+	g.wf("\t_gsecActive = %s && %s && %s && %s == 3\n", gsecA, gsecB, gsecC, gsecLevel)
+	g.w("\tprintln(\"[GARBLE-DEBUG] run() completed successfully\")\n")
+	g.w("}\n\n")
 }
 
 func (g *ggen) emitMixStmt(v string, tables []string, indent int) {
@@ -532,6 +681,8 @@ func (g *ggen) emitFail() {
 	g.wf("\t%s = false\n", gsecC)
 	if flagDebug {
 		g.wf("\t%s(code)\n", g.id("dbgWrite"))
+		g.w("\tprintln(\"[GARBLE-DEBUG] ALOS Garble guard check FAILED with code\", code, \"- process will exit\")\n")
+		g.wf("\t%s(\"ALOS Garble guard check FAILED with code \" + fmt.Sprintf(\"%%d\", code) + \" - process will exit\")\n", g.id("dbgPrint"))
 	}
 	g.wf("\tacc := uint64(code)*%s ^ %s\n", k1, xv)
 	g.wf("\tacc = (acc<<%d)|(acc>>%d)\n", r1, 64-r1)
@@ -541,51 +692,71 @@ func (g *ggen) emitFail() {
 	g.wf("\tacc = acc*%s\n", k3)
 	g.wf("\tacc ^= acc>>17\n")
 	g.wf("\tacc = (acc<<%d)|(acc>>%d)\n", r3, 64-r3)
-	g.w("\tos.Exit(int(acc&0xFE) + 1)\n}\n\n")
+	if flagDebug {
+		g.w("\tprintln(\"[GARBLE-DEBUG] fail() calling _guardOsExit\")\n")
+		g.w("\t_guardOsExit(int(acc&0xFE) + 1)\n}\n\n")
+	} else {
+		g.w("\tos.Exit(int(acc&0xFE) + 1)\n}\n\n")
+	}
 }
 
 func (g *ggen) emitExePath() {
-	g.wf("func %s() (string, bool) {\n", g.id("exePath"))
+	name := g.id("exePath")
+	g.wf("func %s() (string, bool) {\n", name)
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
 	g.w("\tp, err := os.Executable()\n")
-	g.w("\tif err != nil { return \"\", false }\n")
-	g.w("\tif len(p) == 0 || len(p) > 4096 { return \"\", false }\n")
+	g.w("\tif err != nil { println(\"[GARBLE-DEBUG] exePath: os.Executable failed\"); return \"\", false }\n")
+	g.w("\tif len(p) == 0 || len(p) > 4096 { println(\"[GARBLE-DEBUG] exePath: path length invalid\", len(p)); return \"\", false }\n")
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
 	g.w("\treturn p, true\n}\n\n")
 }
 
 func (g *ggen) emitValidatePath() {
-	g.wf("func %s(p string) bool {\n", g.id("validatePath"))
+	name := g.id("validatePath")
+	g.wf("func %s(p string) bool {\n", name)
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER len=\", len(p))\n", name)
 	g.w("\tn := len(p)\n")
-	g.w("\tif n < 1 || n > 4096 { return false }\n")
-	g.w("\tfor i := 0; i < n; i++ { if p[i] == 0 { return false } }\n")
+	g.w("\tif n < 1 || n > 4096 { println(\"[GARBLE-DEBUG] validatePath: length invalid\", n); return false }\n")
+	g.w("\tfor i := 0; i < n; i++ { if p[i] == 0 { println(\"[GARBLE-DEBUG] validatePath: null byte at\", i); return false } }\n")
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
 	g.w("\treturn true\n}\n\n")
 }
 
 func (g *ggen) emitOpenExe() {
-	g.wf("func %s(p string) (*os.File, bool) {\n", g.id("openExe"))
-	g.w("\tif len(p) == 0 { return nil, false }\n")
+	name := g.id("openExe")
+	g.wf("func %s(p string) (*os.File, bool) {\n", name)
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
+	g.w("\tif len(p) == 0 { println(\"[GARBLE-DEBUG] openExe: empty path\"); return nil, false }\n")
 	g.w("\tf, err := os.Open(p)\n")
-	g.w("\tif err != nil || f == nil { return nil, false }\n")
+	g.w("\tif err != nil || f == nil { println(\"[GARBLE-DEBUG] openExe: os.Open failed\", err); return nil, false }\n")
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
 	g.w("\treturn f, true\n}\n\n")
 }
 
 func (g *ggen) emitGetSize() {
-	g.wf("func %s(f *os.File) (int64, bool) {\n", g.id("getSize"))
-	g.w("\tif f == nil { return 0, false }\n")
+	name := g.id("getSize")
+	g.wf("func %s(f *os.File) (int64, bool) {\n", name)
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", name)
+	g.w("\tif f == nil { println(\"[GARBLE-DEBUG] getSize: nil file\"); return 0, false }\n")
 	g.w("\tinfo, err := f.Stat()\n")
-	g.w("\tif err != nil { return 0, false }\n")
+	g.w("\tif err != nil { println(\"[GARBLE-DEBUG] getSize: Stat failed\", err); return 0, false }\n")
 	g.w("\tsz := info.Size()\n")
-	g.w("\tif sz < 112 || sz > 1<<30 { return 0, false }\n")
+	g.w("\tif sz < 112 || sz > 1<<30 { println(\"[GARBLE-DEBUG] getSize: size out of range\", sz); return 0, false }\n")
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok size=\", sz)\n", name)
 	g.w("\treturn sz, true\n}\n\n")
 }
 
 func (g *ggen) emitReadTrailer() {
-	g.wf("func %s(f *os.File, size int64) ([48]byte, bool) {\n", g.id("readTrailer"))
+	name := g.id("readTrailer")
+	g.wf("func %s(f *os.File, size int64) ([48]byte, bool) {\n", name)
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER size=\", size)\n", name)
 	g.w("\tvar t [48]byte\n")
-	g.w("\tif f == nil { return t, false }\n")
+	g.w("\tif f == nil { println(\"[GARBLE-DEBUG] readTrailer: nil file\"); return t, false }\n")
 	g.w("\toff := size - 48\n")
-	g.w("\tif off < 0 { return t, false }\n")
+	g.w("\tif off < 0 { println(\"[GARBLE-DEBUG] readTrailer: size < 48\", size); return t, false }\n")
 	g.w("\tn, err := f.ReadAt(t[:], off)\n")
-	g.w("\tif err != nil || n != 48 { return t, false }\n")
+	g.w("\tif err != nil || n != 48 { println(\"[GARBLE-DEBUG] readTrailer: ReadAt failed\", err, n); return t, false }\n")
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
 	g.w("\treturn t, true\n}\n\n")
 }
 
@@ -599,9 +770,11 @@ func (g *ggen) emitMagicCheck() {
 	magicName := g.id("magic")
 
 	g.wf("func %s(t [48]byte) bool {\n", master)
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", master)
 	for _, c := range checkers {
-		g.wf("\tif !%s(t) { return false }\n", c)
+		g.wf("\tif !%s(t) { println(\"[GARBLE-DEBUG] magicOk: checker failed\"); return false }\n", c)
 	}
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", master)
 	g.w("\treturn true\n}\n\n")
 
 	for i, c := range checkers {
@@ -640,8 +813,8 @@ func (g *ggen) emitSizeCheck() {
 
 	g.wf("func %s(t [48]byte, actual int64) bool {\n", sizeOk)
 	g.wf("\texpected := %s(t)\n", extract)
-	g.w("\tif expected == 0 || expected > 1<<30 { return false }\n")
-	g.w("\tif int64(expected) != actual { return false }\n")
+	g.w("\tif expected == 0 || expected > 1<<30 { println(\"[GARBLE-DEBUG] sizeOk: expected out of range\", expected); return false }\n")
+	g.w("\tif int64(expected) != actual { println(\"[GARBLE-DEBUG] sizeOk: mismatch expected\", expected, \"actual\", actual); return false }\n")
 	g.w("\treturn true\n}\n\n")
 }
 
@@ -680,13 +853,14 @@ func (g *ggen) emitHashBody() {
 	shaH0 := g.id("shaH0")
 
 	g.wf("func %s(f *os.File, size int64) ([32]byte, bool) {\n", name)
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER size=\", size)\n", name)
 	g.w("\tvar zero [32]byte\n")
-	g.w("\tif f == nil || size < 48 { return zero, false }\n")
+	g.w("\tif f == nil || size < 48 { println(\"[GARBLE-DEBUG] hashBody: nil file or size < 48\", size); return zero, false }\n")
 	g.w("\tbodyLen := size - 48\n")
-	g.w("\tif bodyLen < 0 || bodyLen > 1<<30 { return zero, false }\n")
+	g.w("\tif bodyLen < 0 || bodyLen > 1<<30 { println(\"[GARBLE-DEBUG] hashBody: bodyLen invalid\", bodyLen); return zero, false }\n")
 	g.w("\tdata := make([]byte, bodyLen)\n")
 	g.w("\tn, _ := f.ReadAt(data, 0)\n")
-	g.w("\tif int64(n) != bodyLen { return zero, false }\n")
+	g.w("\tif int64(n) != bodyLen { println(\"[GARBLE-DEBUG] hashBody: read mismatch\", n, bodyLen); return zero, false }\n")
 	g.wf("\tstate := %s\n", shaH0)
 	g.w("\tvar block [64]byte\n\tvar pending [64]byte\n\tvar pendingN int\n")
 	g.w("\tremaining := data\n")
@@ -712,6 +886,7 @@ func (g *ggen) emitHashBody() {
 	g.w("\t}\n")
 	g.w("\tvar out [32]byte\n")
 	g.w("\tfor i:=0; i<8; i++ { j:=i*4; out[j]=byte(state[i]>>24);out[j+1]=byte(state[i]>>16);out[j+2]=byte(state[i]>>8);out[j+3]=byte(state[i]) }\n")
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", name)
 	g.w("\treturn out, true\n}\n\n")
 }
 
@@ -722,9 +897,11 @@ func (g *ggen) emitCmpHash() {
 		checkers[i] = g.fresh()
 	}
 	g.wf("func %s(got [32]byte, t [48]byte) bool {\n", master)
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s ENTER\")\n", master)
 	for _, c := range checkers {
-		g.wf("\tif !%s(got, t) { return false }\n", c)
+		g.wf("\tif !%s(got, t) { println(\"[GARBLE-DEBUG] cmpHash: checker failed\"); return false }\n", c)
 	}
+	g.wf("\tprintln(\"[GARBLE-DEBUG] %s EXIT ok\")\n", master)
 	g.w("\treturn true\n}\n\n")
 	for i, c := range checkers {
 		lo := i * 8
@@ -773,9 +950,6 @@ func (g *ggen) emitBallastFunctions(tableNames []string, numHeavy, numMedium, nu
 	return names
 }
 
-// emitDeadVars emits variable declarations that look complex but compile to nothing.
-// The variables are declared but never read — Go compiler eliminates them entirely.
-// All patterns use safe, non-overflowing Go syntax.
 func (g *ggen) emitDeadVars(count int) {
 	for i := 0; i < count; i++ {
 		n := g.fresh()
@@ -798,8 +972,6 @@ func (g *ggen) emitDeadVars(count int) {
 	}
 }
 
-// emitDeadCode emits a block of dead code that the compiler eliminates.
-// It looks like real control flow but always resolves to a no-op.
 func (g *ggen) emitDeadCode() {
 	n := g.fresh()
 	k1 := g.u64()
@@ -833,34 +1005,25 @@ func (g *ggen) emitDeadCode() {
 	}
 }
 
-// emitComplexOp wraps a simple operation in a complex-looking but equivalent expression.
-// The extra syntax bloats the source but compiles to the same machine code.
-// op must be a valid Go statement suffix like "= expr" or "^= expr".
 func (g *ggen) emitComplexOp(target string, op string) {
-	// Only use _tmp wrapping for simple "= expr" assignments.
 	isSimpleAssign := len(op) >= 2 && op[0] == '=' && op[1] == ' '
 
 	switch g.r.Intn(4) {
 	case 0:
-		// Direct emission (baseline)
 		g.wf("\t%s %s\n", target, op)
 	case 1:
 		if isSimpleAssign {
-			// Wrap RHS in a temporary variable declaration block
 			g.wf("\t{ _tmp :=%s; %s = _tmp }\n", op[1:], target)
 		} else {
 			g.wf("\t%s %s\n", target, op)
 		}
 	case 2:
-		// Use an if with always-true condition (avoid large untyped constants)
 		g.wf("\tif true { %s %s }\n", target, op)
 	case 3:
-		// Use a for loop that runs exactly once
 		g.wf("\tfor _once := 0; _once < 1; _once++ { %s %s }\n", target, op)
 	}
 }
 
-// emitComplexIf emits an if statement wrapped in confusing syntax.
 func (g *ggen) emitComplexIf(cond string, body string) {
 	switch g.r.Intn(3) {
 	case 0:

@@ -560,6 +560,9 @@ func (tf *transformer) writeSourceFile(basename, obfuscated string, content []by
 
 func (tf *transformer) transformCompile(args []string) ([]string, error) {
 	flags, paths := splitFlagsFromFiles(args, ".go")
+	if flagDebug {
+		log.Printf("[GARBLE-DEBUG] ====== transformCompile START package=%s files=%d", tf.curPkg.ImportPath, len(paths))
+	}
 	var debugArtifacts cachedDebugArtifacts
 	if flagDebugDir != "" {
 		debugArtifacts.SourceFiles = make(map[string][]byte)
@@ -595,6 +598,7 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 
 	var requiredPkgs []string
 	if _, inGuardSet := sharedCache.GarbleGuardPkgs[tf.curPkg.ImportPath]; inGuardSet {
+		log.Printf("[GARBLE-DEBUG] INJECTING GUARD into package: %s (name=%s)", tf.curPkg.ImportPath, tf.curPkg.Name)
 
 		ballastScale := 1.0
 		if len(sharedCache.GarbleGuardPkgs) >= 3 {
@@ -619,10 +623,10 @@ func (tf *transformer) transformCompile(args []string) ([]string, error) {
 			}
 		}
 		if directImportsOS {
-
+			log.Printf("[GARBLE-DEBUG]   -> Full guard (imports os) for %s", tf.curPkg.ImportPath)
 			guardSrc = generateGuardSource(tf.obfRand, tf.curPkg.Name, ballastScale)
 		} else {
-
+			log.Printf("[GARBLE-DEBUG]   -> Ballast-only guard for %s", tf.curPkg.ImportPath)
 			guardSrc = generateGuardSourceBallastOnly(tf.obfRand, tf.curPkg.Name, ballastScale)
 		}
 		guardFile, parseErr := parser.ParseFile(
@@ -1176,15 +1180,33 @@ func injectDecoyLiterals(rnd *mathrand.Rand, file *ast.File) {
 func (tf *transformer) transformGoFile(file *ast.File) *ast.File {
 
 	if flagLiterals && tf.curPkg.ToObfuscate && !tf.skipLiterals {
-		if tf.guardInjected {
-
-			literals.GuardBoolName = hashWithPackage(tf.curPkg, "_gsecActive")
-		}
 		injectDecoyLiterals(tf.obfRand, file)
 		file = literals.Obfuscate(tf.obfRand, file, tf.info, tf.linkerVariableStrings, randomName)
-		literals.GuardBoolName = ""
-
 		tf.useAllImports(file)
+	}
+
+	if tf.guardInjected && tf.curPkg.ToObfuscate && !tf.curPkg.Standard && tf.curPkg.Name == "main" {
+		guardName := hashWithPackage(tf.curPkg, "_gsecActive")
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			if fd.Recv != nil {
+				continue
+			}
+			if fd.Name == nil {
+				continue
+			}
+			if fd.Name.Name != "main" {
+				continue
+			}
+			if flagDebug {
+				log.Printf("[GARBLE-DEBUG] injecting FunctionGuardCheck into %s.%s", tf.curPkg.ImportPath, fd.Name.Name)
+			}
+			check := literals.FunctionGuardCheck(guardName)
+			fd.Body.List = append([]ast.Stmt{check}, fd.Body.List...)
+		}
 	}
 
 	pre := func(cursor *astutil.Cursor) bool {

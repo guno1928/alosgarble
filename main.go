@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"cmp"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
@@ -117,7 +116,7 @@ var (
 func init() {
 	flagSet.Usage = usage
 	flagSet.BoolVar(&flagLiterals, "literals", true, "Obfuscate literals such as strings (always on)")
-	flagSet.BoolVar(&flagTiny, "tiny", true, "Optimize for binary size, losing some ability to reverse the process (always on)")
+	flagSet.BoolVar(&flagTiny, "tiny", false, "Optimize for binary size, losing some ability to reverse the process")
 
 	flagLiterals = true
 	flagTiny = true
@@ -166,7 +165,7 @@ func main() {
 	flagSet.Parse(os.Args[1:])
 
 	flagLiterals = true
-	flagTiny = true
+	flagTiny = false
 	log.SetPrefix("[garble] ")
 	log.SetFlags(0)
 	log.SetOutput(io.Discard)
@@ -782,28 +781,6 @@ To install Go, see: https://go.dev/doc/install
 	sharedCache.GoCmd = filepath.Join(sharedCache.GoEnv.GOROOT, "bin", "go")
 	sharedCache.GOGARBLE = cmp.Or(os.Getenv("GOGARBLE"), "*")
 	return nil
-}
-
-type uniqueLineWriter struct {
-	out  io.Writer
-	seen map[string]bool
-}
-
-func (w *uniqueLineWriter) Write(p []byte) (n int, err error) {
-	if !flagDebug {
-		panic("unexpected use of uniqueLineWriter with -debug unset")
-	}
-	if bytes.Count(p, []byte("\n")) != 1 {
-		return 0, fmt.Errorf("log write wasn't just one line: %q", p)
-	}
-	if w.seen[string(p)] {
-		return len(p), nil
-	}
-	if w.seen == nil {
-		w.seen = make(map[string]bool)
-	}
-	w.seen[string(p)] = true
-	return w.out.Write(p)
 }
 
 func debugSince(start time.Time) time.Duration {

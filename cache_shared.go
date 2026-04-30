@@ -317,6 +317,10 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 
 			path == "crypto/internal/fips140", strings.HasPrefix(path, "crypto/internal/fips140/"):
 
+		case pkg.Standard,
+			strings.HasPrefix(path, "golang.org/"),
+			strings.HasPrefix(path, "github.com/cespare/xxhash/"):
+
 		case len(pkg.CompiledGoFiles) == 0:
 
 		case pkg.Name == "main" && strings.HasSuffix(path, ".test"),
@@ -375,6 +379,30 @@ func appendListedPackages(packages []string, mainBuild bool) error {
 					sharedCache.GarbleGuardPkgs[pkg.ImportPath] = true
 				}
 			}
+		}
+
+		for path := range sharedCache.GarbleGuardPkgs {
+			if strings.HasPrefix(path, "golang.org/x/sys/") {
+				delete(sharedCache.GarbleGuardPkgs, path)
+				if flagDebug {
+					fmt.Fprintf(os.Stderr, "[GARBLE-DEBUG] Excluding %s from guard set (low-level syscall package)\n", path)
+				}
+				continue
+			}
+			pkg := sharedCache.ListedPackages[path]
+			if pkg != nil && len(pkg.SFiles) > 0 {
+				delete(sharedCache.GarbleGuardPkgs, path)
+				if flagDebug {
+					fmt.Fprintf(os.Stderr, "[GARBLE-DEBUG] Excluding %s from guard set (%d assembly files)\n", path, len(pkg.SFiles))
+				}
+			}
+		}
+	}
+
+	if flagDebug {
+		fmt.Fprintf(os.Stderr, "[GARBLE-DEBUG] GarbleGuardPkgs count: %d\n", len(sharedCache.GarbleGuardPkgs))
+		for path := range sharedCache.GarbleGuardPkgs {
+			fmt.Fprintf(os.Stderr, "[GARBLE-DEBUG] GarbleGuardPkgs contains: %s\n", path)
 		}
 	}
 

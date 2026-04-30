@@ -34,17 +34,20 @@ func widePickNames(rnd *mathrand.Rand, n int) []string {
 }
 
 func (wide) obfuscate(obfRand *mathrand.Rand, data []byte, extKeys []*externalKey) *ast.BlockStmt {
+	n := len(data)
+	if n == 0 {
+		return ah.BlockStmt(ah.ReturnStmt(&ast.CompositeLit{Type: &ast.ArrayType{Elt: ast.NewIdent("byte")}}))
+	}
 
-	key := make([]byte, len(data))
+	key := make([]byte, n)
 	obfRand.Read(key)
 
 	storedCheck := wideChecksum(data)
 
-	enc := make([]byte, len(data))
+	enc := make([]byte, n)
 	for i := range data {
 		enc[i] = data[i] ^ key[i]
 	}
-	n := len(data)
 
 	K := wideFragmentCount(obfRand, n)
 	fragments, fragOffsets := wideFragmentKey(obfRand, key, K)
@@ -79,16 +82,21 @@ func (wide) obfuscate(obfRand *mathrand.Rand, data []byte, extKeys []*externalKe
 		copy(ca, content)
 		cb := make([]byte, sz)
 		copy(cb, content)
+		nA := 2*K + 2*dp
+		nB := nA + 1
+		if nB >= len(fragLetters) {
+			panic("wide obfuscator ran out of fragment letter names")
+		}
 		decoys[dp] = decoyPair{
-			nameA:    string(fragLetters[2*K+2*dp]),
-			nameB:    string(fragLetters[2*K+2*dp+1]),
+			nameA:    string(fragLetters[nA]),
+			nameB:    string(fragLetters[nB]),
 			idx:      obfRand.Intn(sz),
 			contentA: ca,
 			contentB: cb,
 		}
 	}
 
-	sn := widePickNames(obfRand, 12+K)
+	sn := widePickNames(obfRand, 11+K)
 	nEnc := sn[0]
 	nKey := sn[1]
 	nCheck := sn[2]
@@ -99,11 +107,10 @@ func (wide) obfuscate(obfRand *mathrand.Rand, data []byte, extKeys []*externalKe
 	nJ := sn[7]
 	nRem := sn[8]
 	nEV := sn[9]
-	nQ := sn[10]
-	nST := sn[11]
-	hop2Names := sn[12 : 12+K]
+	nST := sn[10]
+	hop2Names := sn[11 : 11+K]
 
-	loopStrategy := obfRand.Intn(13) // #4: 13 structural variants (was 10)
+	loopStrategy := obfRand.Intn(13)
 
 	keyAssembly := obfRand.Intn(6)
 
@@ -527,19 +534,12 @@ func (wide) obfuscate(obfRand *mathrand.Rand, data []byte, extKeys []*externalKe
 		accum := checkAccum(ast.NewIdent(nPV), inlineShift(ast.NewIdent(nI)))
 		mainLoops = []ast.Stmt{&ast.ForStmt{
 			Init: &ast.AssignStmt{
-				Lhs: []ast.Expr{ast.NewIdent(nI), ast.NewIdent(nQ)},
+				Lhs: []ast.Expr{ast.NewIdent(nI)},
 				Tok: token.DEFINE,
-				Rhs: []ast.Expr{ah.IntLit(0), ah.IntLit(n - 1)},
+				Rhs: []ast.Expr{ah.IntLit(0)},
 			},
 			Cond: &ast.BinaryExpr{X: ast.NewIdent(nI), Op: token.LSS, Y: ah.IntLit(n)},
-			Post: &ast.AssignStmt{
-				Lhs: []ast.Expr{ast.NewIdent(nI), ast.NewIdent(nQ)},
-				Tok: token.ASSIGN,
-				Rhs: []ast.Expr{
-					&ast.BinaryExpr{X: ast.NewIdent(nI), Op: token.ADD, Y: ah.IntLit(1)},
-					&ast.BinaryExpr{X: ast.NewIdent(nQ), Op: token.SUB, Y: ah.IntLit(1)},
-				},
-			},
+			Post: &ast.IncDecStmt{X: ast.NewIdent(nI), Tok: token.INC},
 			Body: &ast.BlockStmt{List: ordered(pvDecl, dataAsgn, accum)},
 		}}
 
@@ -668,19 +668,12 @@ func (wide) obfuscate(obfRand *mathrand.Rand, data []byte, extKeys []*externalKe
 		}
 		mainLoops = []ast.Stmt{&ast.ForStmt{
 			Init: &ast.AssignStmt{
-				Lhs: []ast.Expr{ast.NewIdent(nI), ast.NewIdent(nQ)},
+				Lhs: []ast.Expr{ast.NewIdent(nI)},
 				Tok: token.DEFINE,
-				Rhs: []ast.Expr{ah.IntLit(0), ah.IntLit(n)},
+				Rhs: []ast.Expr{ah.IntLit(0)},
 			},
 			Cond: &ast.BinaryExpr{X: ast.NewIdent(nI), Op: token.LSS, Y: ah.IntLit(n)},
-			Post: &ast.AssignStmt{
-				Lhs: []ast.Expr{ast.NewIdent(nI), ast.NewIdent(nQ)},
-				Tok: token.ASSIGN,
-				Rhs: []ast.Expr{
-					&ast.BinaryExpr{X: ast.NewIdent(nI), Op: token.ADD, Y: ah.IntLit(1)},
-					&ast.BinaryExpr{X: ast.NewIdent(nQ), Op: token.SUB, Y: ah.IntLit(1)},
-				},
-			},
+			Post: &ast.IncDecStmt{X: ast.NewIdent(nI), Tok: token.INC},
 			Body: &ast.BlockStmt{List: ordered(pvDecl, dataAsgn,
 				checkAccum(ast.NewIdent(nPV), inlineShift(ast.NewIdent(nI))))},
 		}}
@@ -831,13 +824,8 @@ func wideOffsetExpr(fi int, aliasName []string) ast.Expr {
 
 func wideChecksum(data []byte) uint64 {
 	var check uint64
-	var s uint
-	for _, b := range data {
-		check ^= uint64(b) << s
-		s += 8
-		if s >= 64 {
-			s = 0
-		}
+	for i, b := range data {
+		check ^= uint64(b) << uint((i*8)&63)
 	}
 	return check
 }

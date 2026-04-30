@@ -61,14 +61,6 @@ var (
 	}
 )
 
-func genRandIntSlice(obfRand *mathrand.Rand, max, count int) []int {
-	indexes := make([]int, count)
-	for i := range count {
-		indexes[i] = obfRand.Intn(max)
-	}
-	return indexes
-}
-
 func randOperator(obfRand *mathrand.Rand) token.Token {
 	operatorTokens := [...]token.Token{token.XOR, token.ADD, token.SUB}
 	return operatorTokens[obfRand.Intn(len(operatorTokens))]
@@ -194,23 +186,6 @@ func dataToByteSliceWithExtKeys(rand *mathrand.Rand, data []byte, extKeys []*ext
 
 	stmts = append([]ast.Stmt{ah.AssignDefineStmt(ast.NewIdent("data"), ah.DataToByteSlice(data))}, append(stmts, ah.ReturnStmt(ast.NewIdent("data")))...)
 	return ah.LambdaCall(nil, ah.ByteSliceType(), ah.BlockStmt(stmts...), nil)
-}
-
-func byteLitWithExtKey(rand *mathrand.Rand, val byte, extKeys []*externalKey, extKeyProb externalKeyProbability) ast.Expr {
-	if !extKeyProb.Try(rand) {
-		return ah.IntLit(int(val))
-	}
-
-	key := extKeys[rand.Intn(len(extKeys))]
-	key.AddRef()
-
-	op, b := randOperator(rand), rand.Intn(key.bits/8)
-	newVal := evalOperator(op, val, byte(key.value>>(b*8)))
-
-	return operatorToReversedBinaryExpr(op,
-		ah.CallExprByName("byte", ah.IntLit(int(newVal))),
-		key.ToExpr(b),
-	)
 }
 
 type obfRand struct {
